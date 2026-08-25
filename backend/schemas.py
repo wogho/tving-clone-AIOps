@@ -46,6 +46,14 @@ class WatchHistoryAdd(BaseModel):
     episode_number: int = 1
     watch_position: int = 0
 
+class RecommendedContent(BaseModel):
+    id: int
+    title: str
+    category: Optional[str] = None
+    genre: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    synopsis: Optional[str] = None
+
 class ChatRequest(BaseModel):
     message: str
     user_id: Optional[int] = None
@@ -55,3 +63,4 @@ class ChatResponse(BaseModel):
     reply: str
     personalized: bool = False
     context_used: Optional[dict] = None
+    recommended_items: Optional[List[RecommendedContent]] = []
