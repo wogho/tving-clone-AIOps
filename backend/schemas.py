@@ -48,6 +48,10 @@ class WatchHistoryAdd(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+    user_id: Optional[int] = None
+    username: Optional[str] = None
 
 class ChatResponse(BaseModel):
     reply: str
+    personalized: bool = False
+    context_used: Optional[dict] = None
