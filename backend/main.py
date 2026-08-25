@@ -20,6 +20,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["인증"])
 app.include_router(items.router, prefix="/api", tags=["콘텐츠/찜/시청기록"])
 app.include_router(chat.router, prefix="/api", tags=["AI 챗봇"])
+app.include_router(ops.router, prefix="/api/ops", tags=["AIOps 테스트"])
 app.include_router(ops.router, prefix="/ops", tags=["AIOps 테스트"])
 
 @app.get("/")
