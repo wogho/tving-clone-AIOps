@@ -6,8 +6,9 @@ TVING AIOps Platform - CloudWatch Anomaly Detection + SNS + Slack 시연 데모 
 [시연 시나리오]
 1. ECS Fargate 백엔드 장애 및 부하 주입 (CPU 과부하 / API 지연 / DB 장애)
 2. CloudWatch 이상 탐지(Anomaly Detection) 알람 상태 모니터링
-3. SNS -> Lambda -> Slack 실시간 경보 메시지 발송 검증
-4. 시스템 자동 복구 및 헬스체크 확인
+3. SNS -> Lambda -> Slack 실시간 장애 경보 및 긴급 조치사항 발송
+4. 시스템 자동 복구(Self-Healing) 및 헬스체크 확인
+5. SNS -> Lambda -> Slack 정상 복구 완료 및 조치 내역 알림 발송
 ================================================================================
 """
 
@@ -18,7 +19,7 @@ import time
 import urllib.request
 import urllib.error
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
 
 # AWS 설정
 AWS_REGION = os.getenv("AWS_REGION", "ap-northeast-2")
@@ -104,13 +105,12 @@ def demo_inject_db_error():
     print("\n💡 백엔드 DB 쿼리 실행 시 80% 확률로 연결 에러가 발생하여 500 에러 알람을 유발합니다.")
 
 def demo_send_anomaly_slack_alert():
-    """시나리오 4: SNS -> Lambda -> Slack 실시간 이상 탐지 알람 발송"""
-    print_header("시나리오 4: CloudWatch 이상 탐지 실시간 경보 발송 (SNS -> Slack)")
+    """시나리오 4: SNS -> Lambda -> Slack 실시간 장애 경보 및 긴급 조치사항 발송"""
+    print_header("시나리오 4: CloudWatch 이상 탐지 실시간 경보 & 긴급 조치사항 발송 (SNS -> Slack)")
     print(f"SNS Topic: {SNS_TOPIC_ARN}")
     
-    now_str = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     
-    # CloudWatch Anomaly Detection ALARM 실시간 페이로드 시뮬레이션
     alarm_payload = {
         "AlarmName": "tving-ecs-cpu-anomaly-alarm",
         "AlarmDescription": "TVING ECS Fargate CPU 이상 징후 감지 (CloudWatch Anomaly Detection)",
@@ -119,33 +119,58 @@ def demo_send_anomaly_slack_alert():
         "NewStateReason": "Threshold Breached: 1 datapoint [96.4%] was greater than the upper anomaly band [38.2%].",
         "StateChangeTime": now_str,
         "Region": "Asia Pacific (Seoul)",
-        "AlarmArn": "arn:aws:cloudwatch:ap-northeast-2:761018884888:alarm:tving-ecs-cpu-anomaly-alarm",
-        "Trigger": {
-            "MetricName": "CPUUtilization",
-            "Namespace": "AWS/ECS",
-            "StatisticType": "ExtendedStatistic",
-            "Statistic": "p99",
-            "Unit": None,
-            "Dimensions": [
-                {"name": "ClusterName", "value": "tving-cluster"},
-                {"name": "ServiceName", "value": "tving-backend-service"}
-            ],
-            "Period": 60,
-            "EvaluationPeriods": 1,
-            "ComparisonOperator": "GreaterThanUpperThreshold",
-            "ThresholdMetricId": "ad1"
-        }
+        "Remediation": (
+            "1. ECS Fargate 오토스케일링 태스크 증설 상태 확인 및 스케일아웃 실행\n"
+            "2. 비정상 인입 트래픽 및 과부하 엔드포인트(/api/ops/*) 차단\n"
+            "3. Slow Query 및 DB Connection Pool 가용량 점검\n"
+            "4. CloudWatch 이상 탐지 대역(±2σ) 추이 및 컨테이너 리소스 모니터링"
+        )
     }
     
     try:
         response = sns_client.publish(
             TopicArn=SNS_TOPIC_ARN,
             Subject="ALARM: 'tving-ecs-cpu-anomaly-alarm' in Asia Pacific (Seoul)",
-            Message=json.dumps(alarm_payload)
+            Message=json.dumps(alarm_payload, ensure_ascii=False)
         )
         print(f"[발송 성공] MessageId: {response['MessageId']}")
-        print("\n✅ Slack 채널에 [🚨 TVING AIOps 장애 / 이상 탐지 경보] 카드가 즉시 수신되었습니다!")
-        print("   - 발생 시간, 클러스터명, 서비스명, 급증 수치 및 이상 대역 정보 포함")
+        print("\n✅ Slack 채널에 [🚨 TVING AIOps 장애 경보 & 긴급 조치사항] 카드가 수신되었습니다!")
+        print("   - 이상 발생 지표, 이상 탐지 대역 초과량, 긴급 조치 가이드(Action Items) 포함")
+    except Exception as e:
+        print(f"[발송 실패]: {str(e)}")
+
+def demo_send_recovery_slack_alert():
+    """시나리오 4-B: SNS -> Lambda -> Slack 정상 복구 완료 및 조치 내역 알림 발송"""
+    print_header("시나리오 4-B: 시스템 정상 복구 완료 및 완료 조치 내역 발송 (SNS -> Slack)")
+    print(f"SNS Topic: {SNS_TOPIC_ARN}")
+    
+    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    
+    recovery_payload = {
+        "AlarmName": "tving-ecs-cpu-anomaly-alarm",
+        "AlarmDescription": "TVING ECS Fargate CPU 이상 징후 정상 복구 완료",
+        "AWSAccountId": "761018884888",
+        "NewStateValue": "OK",
+        "NewStateReason": "Thresholds Cleared: 1 datapoint [2.04%] returned to normal expected band [0% ~ 15%].",
+        "StateChangeTime": now_str,
+        "Region": "Asia Pacific (Seoul)",
+        "RecoveryDetails": (
+            "1. 부하 프로세스 자동 종료 및 CPU/메모리 정상 수치 회복\n"
+            "2. ECS 헬스체크(/api/ops/status) 정상 응답 (HTTP 200 OK) 확인\n"
+            "3. ALB 트래픽 분산 및 타겟 응답 지연 시간 안정화\n"
+            "4. 이상 탐지 대역(Anomaly Band) 내 완전 복귀 및 인시던트 종료"
+        )
+    }
+    
+    try:
+        response = sns_client.publish(
+            TopicArn=SNS_TOPIC_ARN,
+            Subject="OK: 'tving-ecs-cpu-anomaly-alarm' in Asia Pacific (Seoul)",
+            Message=json.dumps(recovery_payload, ensure_ascii=False)
+        )
+        print(f"[발송 성공] MessageId: {response['MessageId']}")
+        print("\n✅ Slack 채널에 [✅ TVING AIOps 정상 복구 완료 & 조치 내역] 카드가 수신되었습니다!")
+        print("   - 복구 상태(Healthy), 정상 대역 진입 수치, 완료된 조치 내역(Resolution Summary) 포함")
     except Exception as e:
         print(f"[발송 실패]: {str(e)}")
 
@@ -159,7 +184,8 @@ def demo_check_cloudwatch_alarms():
         for alarm in response.get("MetricAlarms", []):
             print(f"\n• 알람 이름: {alarm['AlarmName']}")
             print(f"  - 현재 상태: {alarm['StateValue']} (이유: {alarm.get('StateReason', 'N/A')[:60]}...)")
-            print(f"  - 연동 액션(SNS): {alarm.get('AlarmActions', [])}")
+            print(f"  - 연동 액션(ALARM): {alarm.get('AlarmActions', [])}")
+            print(f"  - 연동 액션(OK/복구): {alarm.get('OKActions', [])}")
             print(f"  - 평가 조건: {alarm.get('ComparisonOperator')} / ThresholdMetricId={alarm.get('ThresholdMetricId')}")
     except Exception as e:
         print(f"CloudWatch 조회 실패: {str(e)}")
@@ -171,20 +197,17 @@ def demo_check_status_and_recovery():
     
     result = http_get("/ops/status")
     print(f"\n[현재 백엔드 상태]:\n{json.dumps(result, indent=2, ensure_ascii=False)}")
-    
-    health = http_get("/health")
-    print(f"\n[기본 서비스 헬스체크]:\n{json.dumps(health, indent=2, ensure_ascii=False)}")
 
 def demo_full_e2e_walkthrough():
     """시나리오 7: 전체 E2E 종합 시연"""
-    print_header("🚀 TVING AIOps 이상 탐지 알람 전체 E2E 종합 시연 시작")
+    print_header("🚀 TVING AIOps 이상 탐지 ➔ 장애 경보(조치사항) ➔ 자동 복구(복구내역) 전체 E2E 종합 시연")
     time.sleep(1)
     
-    print_step(1, "정상 상태 확인")
+    print_step(1, "정상 상태 헬스체크 확인")
     demo_check_status_and_recovery()
     time.sleep(2)
     
-    print_step(2, "CloudWatch 이상 탐지 알람 등록 상태 확인")
+    print_step(2, "CloudWatch Anomaly Detection 알람 및 복구 액션(OKActions) 등록 확인")
     demo_check_cloudwatch_alarms()
     time.sleep(2)
     
@@ -192,16 +215,19 @@ def demo_full_e2e_walkthrough():
     demo_inject_cpu_load()
     time.sleep(2)
     
-    print_step(4, "CloudWatch Anomaly Detection -> SNS -> Slack 경보 발송")
+    print_step(4, "CloudWatch Anomaly Detection ➔ SNS ➔ Lambda ➔ Slack 장애 경보 & 긴급 조치사항 발송")
     demo_send_anomaly_slack_alert()
+    time.sleep(3)
+    
+    print_step(5, "이상 부하 종료 후 시스템 상태 복구 확인 (Self-Healing)")
+    demo_check_status_and_recovery()
     time.sleep(2)
     
-    print_step(5, "이상 부하 종료 후 시스템 상태 복구 확인")
-    time.sleep(3)
-    demo_check_status_and_recovery()
+    print_step(6, "시스템 정상 복구 완료 및 조치 내역 알림 발송 (SNS ➔ Slack)")
+    demo_send_recovery_slack_alert()
     
     print("\n" + "=" * 70)
-    print("🎉 TVING AIOps 이상 탐지 및 실시간 알림 전체 E2E 시연이 완료되었습니다!")
+    print("🎉 TVING AIOps 이상 탐지 장애 경보 및 정상 복구 완료 전체 E2E 시연이 완료되었습니다!")
     print("=" * 70)
 
 def main():
@@ -212,14 +238,15 @@ def main():
         print(" [1] 🔥 백엔드 CPU 과부하 주입 (Fault Injection)")
         print(" [2] ⏱️ API 응답 지연 장애 주입 (Delay Injection)")
         print(" [3] 💥 DB 연결 장애 주입 (DB Error Simulation)")
-        print(" [4] 🚨 CloudWatch Anomaly Detection -> Slack 경보 즉시 발송")
-        print(" [5] 📊 CloudWatch 이상 탐지 알람 상태 조회")
-        print(" [6] 🩺 시스템 상태 및 정상 복구 확인 (/ops/status)")
-        print(" [7] 🚀 전체 시나리오 원클릭 종합 시연 (Full E2E Demo)")
+        print(" [4] 🚨 CloudWatch 이상 탐지 -> 장애 경보 & 조치사항 Slack 발송")
+        print(" [5] ✅ 시스템 정상 복구 완료 & 복구 내역 Slack 발송")
+        print(" [6] 📊 CloudWatch 이상 탐지 알람 상태 조회 (ALARM / OKActions)")
+        print(" [7] 🩺 시스템 상태 및 헬스체크 확인 (/ops/status)")
+        print(" [8] 🚀 전체 시나리오 원클릭 종합 시연 (장애 경보 + 조치사항 + 복구내역)")
         print(" [0] 🚪 종료")
         print("=" * 70)
         
-        choice = input("선택할 번호를 입력하세요 (0-7): ").strip()
+        choice = input("선택할 번호를 입력하세요 (0-8): ").strip()
         
         if choice == "1":
             demo_inject_cpu_load()
@@ -230,10 +257,12 @@ def main():
         elif choice == "4":
             demo_send_anomaly_slack_alert()
         elif choice == "5":
-            demo_check_cloudwatch_alarms()
+            demo_send_recovery_slack_alert()
         elif choice == "6":
-            demo_check_status_and_recovery()
+            demo_check_cloudwatch_alarms()
         elif choice == "7":
+            demo_check_status_and_recovery()
+        elif choice == "8":
             demo_full_e2e_walkthrough()
         elif choice == "0":
             print("\n시연 프로그램을 종료합니다. 감사합니다.")
