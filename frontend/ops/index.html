@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TVING AIOps - 지능형 운영자 관제 센터</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --tving-red: #E50914;
+            --tving-black: #0F0F0F;
+            --tving-card: #181818;
+            --tving-border: #2A2A2A;
+            --accent-blue: #3B82F6;
+            --accent-green: #22C55E;
+            --accent-orange: #F59E0B;
+        }
+
+        body {
+            background-color: var(--tving-black);
+            color: #FFFFFF;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        .ops-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+
+        .ops-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--tving-border);
+            margin-bottom: 30px;
+        }
+
+        .ops-title {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .ops-title h1 {
+            font-size: 26px;
+            font-weight: 800;
+            margin: 0;
+            background: linear-gradient(90deg, #FFFFFF, #E50914);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .badge-live {
+            background: rgba(34, 197, 94, 0.15);
+            color: var(--accent-green);
+            border: 1px solid rgba(34, 197, 94, 0.3);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .badge-live::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            background-color: var(--accent-green);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+
+        .grid-dashboard {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+        }
+
+        @media (max-width: 960px) {
+            .grid-dashboard {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* 메트릭 카드 */
+        .metrics-panel {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .metric-card {
+            background: var(--tving-card);
+            border: 1px solid var(--tving-border);
+            border-radius: 12px;
+            padding: 18px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .metric-card:hover {
+            transform: translateY(-2px);
+            border-color: #444;
+        }
+
+        .metric-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: #999;
+            font-size: 13px;
+            margin-bottom: 10px;
+        }
+
+        .metric-value {
+            font-size: 22px;
+            font-weight: 700;
+            color: #FFF;
+        }
+
+        .metric-sub {
+            font-size: 12px;
+            color: #777;
+            margin-top: 5px;
+        }
+
+        /* 챗봇 패널 */
+        .chat-panel {
+            background: var(--tving-card);
+            border: 1px solid var(--tving-border);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            height: 700px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+
+        .chat-header {
+            padding: 18px 20px;
+            background: #202020;
+            border-bottom: 1px solid var(--tving-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h2 {
+            font-size: 16px;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .msg-bubble {
+            max-width: 85%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.5;
+            word-break: break-word;
+        }
+
+        .msg-user {
+            align-self: flex-end;
+            background: var(--tving-red);
+            color: white;
+            border-bottom-right-radius: 2px;
+        }
+
+        .msg-ai {
+            align-self: flex-start;
+            background: #252525;
+            color: #E0E0E0;
+            border-bottom-left-radius: 2px;
+            border: 1px solid #333;
+        }
+
+        .msg-ai pre {
+            background: #111;
+            padding: 10px;
+            border-radius: 6px;
+            overflow-x: auto;
+            color: #A3E635;
+            font-size: 12px;
+        }
+
+        .quick-prompts {
+            padding: 10px 20px;
+            background: #151515;
+            border-top: 1px solid var(--tving-border);
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .quick-btn {
+            background: #222;
+            border: 1px solid #333;
+            color: #CCC;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s, color 0.2s;
+        }
+
+        .quick-btn:hover {
+            background: var(--tving-red);
+            color: white;
+            border-color: var(--tving-red);
+        }
+
+        .chat-input-area {
+            padding: 15px 20px;
+            background: #1C1C1C;
+            border-top: 1px solid var(--tving-border);
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: #2B2B2B;
+            border: 1px solid #3A3A3A;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .chat-input:focus {
+            border-color: var(--tving-red);
+        }
+
+        .chat-send-btn {
+            background: var(--tving-red);
+            color: white;
+            border: none;
+            padding: 0 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .chat-send-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* 컨트롤 및 테스트 패널 */
+        .controls-panel {
+            background: var(--tving-card);
+            border: 1px solid var(--tving-border);
+            border-radius: 16px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+
+        .controls-panel h3 {
+            margin-top: 0;
+            font-size: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .test-btns {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-test {
+            background: #2A2A2A;
+            border: 1px solid #444;
+            color: #EEE;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-test:hover {
+            background: #3A3A3A;
+            border-color: #666;
+        }
+
+        .btn-test.danger:hover {
+            background: rgba(229, 9, 20, 0.2);
+            border-color: var(--tving-red);
+            color: #FFA5A5;
+        }
+    </style>
+</head>
+<body>
+    <div class="ops-container">
+        <!-- 헤더 -->
+        <div class="ops-header">
+            <div class="ops-title">
+                <a href="/" style="color:var(--tving-red); text-decoration:none; font-weight:900; font-size:24px;">TVING</a>
+                <h1>AIOps 지능형 운영자 관제 센터</h1>
+            </div>
+            <div style="display:flex; align-items:center; gap:15px;">
+                <span class="badge-live">SYSTEM ONLINE (ap-northeast-2)</span>
+                <a href="/" style="color:#AAA; text-decoration:none; font-size:14px;"><i class="fa-solid fa-arrow-left"></i> TVING 서비스 홈</a>
+            </div>
+        </div>
+
+        <!-- 2단 그리드 레이아웃 -->
+        <div class="grid-dashboard">
+            <!-- 좌측: 실시간 인프라 지표 & 테스트 컨트롤 -->
+            <div>
+                <!-- 실시간 메트릭 카드 -->
+                <div class="metrics-panel">
+                    <div class="metric-card">
+                        <div class="metric-header">
+                            <span>ECS Fargate</span>
+                            <i class="fa-solid fa-server" style="color:var(--accent-blue);"></i>
+                        </div>
+                        <div class="metric-value" id="ecs-status">ACTIVE</div>
+                        <div class="metric-sub" id="ecs-detail">tving-backend-service (1 Task)</div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-header">
+                            <span>RDS PostgreSQL</span>
+                            <i class="fa-solid fa-database" style="color:var(--accent-green);"></i>
+                        </div>
+                        <div class="metric-value" id="db-status">HEALTHY</div>
+                        <div class="metric-sub" id="db-latency">Latency: 2.4ms</div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-header">
+                            <span>CloudWatch 이상탐지</span>
+                            <i class="fa-solid fa-chart-line" style="color:var(--accent-orange);"></i>
+                        </div>
+                        <div class="metric-value">±2σ Band OK</div>
+                        <div class="metric-sub">CPU / Memory Anomaly Detection</div>
+                    </div>
+
+                    <div class="metric-card">
+                        <div class="metric-header">
+                            <span>Amazon Bedrock</span>
+                            <i class="fa-solid fa-brain" style="color:#C084FC;"></i>
+                        </div>
+                        <div class="metric-value">ONLINE</div>
+                        <div class="metric-sub">Claude 3 Haiku / 3.5 Sonnet RAG</div>
+                    </div>
+                </div>
+
+                <!-- 아키텍처 상태 요약 -->
+                <div class="controls-panel" style="margin-top:0;">
+                    <h3><i class="fa-solid fa-network-wired" style="color:var(--accent-blue);"></i> 시스템 아키텍처 진입점 요약</h3>
+                    <div style="font-size:13px; color:#AAA; line-height:1.8;">
+                        <div>• <strong>DNS/CDN</strong>: <code>ops.user6.cloudai.store</code> ➔ CloudFront ➔ S3 AIOps Dashboard</div>
+                        <div>• <strong>API 진입점</strong>: API Gateway (VPC Link) ➔ Internal ALB ➔ ECS Fargate</div>
+                        <div>• <strong>AI 모니터링</strong>: CloudWatch Anomaly Alarm ➔ SNS ➔ Bedrock SecAIOps Engine</div>
+                    </div>
+                </div>
+
+                <!-- 장애 시뮬레이션 및 테스트 패널 -->
+                <div class="controls-panel">
+                    <h3><i class="fa-solid fa-vial" style="color:var(--tving-red);"></i> AIOps 장애 시뮬레이션 트리거</h3>
+                    <p style="font-size:12px; color:#888; margin-bottom:15px;">실제 CloudWatch 이상 탐지 메트릭 및 로그 경보를 발생시켜 AIOps 자율 대응을 검증합니다.</p>
+                    <div class="test-btns">
+                        <button class="btn-test danger" onclick="triggerOpsTest('/api/ops/cpu-load', 'CPU 부하 (5초)')">
+                            <i class="fa-solid fa-fire"></i> CPU 부하 유발
+                        </button>
+                        <button class="btn-test" onclick="triggerOpsTest('/api/ops/delay', '응답 지연 (3초)')">
+                            <i class="fa-solid fa-clock"></i> ALB 응답 지연
+                        </button>
+                        <button class="btn-test danger" onclick="triggerOpsTest('/api/ops/db-error', 'DB 에러 유발')">
+                            <i class="fa-solid fa-bug"></i> 500 DB 에러
+                        </button>
+                        <button class="btn-test" onclick="refreshMetrics()">
+                            <i class="fa-solid fa-rotate"></i> 헬스체크 갱신
+                        </button>
+                    </div>
+                    <div id="test-result" style="margin-top:12px; font-size:12px; color:#BBB; min-height:18px;"></div>
+                </div>
+            </div>
+
+            <!-- 우측: AIOps 운영자 진단 AI 챗봇 -->
+            <div class="chat-panel">
+                <div class="chat-header">
+                    <h2><i class="fa-solid fa-robot" style="color:var(--tving-red);"></i> Bedrock AIOps 지능형 운영자 어시스턴트</h2>
+                    <span style="font-size:12px; color:#777;">Model: Claude 3</span>
+                </div>
+
+                <div class="chat-messages" id="chat-messages">
+                    <div class="msg-bubble msg-ai">
+                        👋 안녕하세요! <strong>TVING 클라우드 인프라 AIOps 지능형 운영자 어시스턴트</strong>입니다.<br><br>
+                        시스템 상태 질문, CloudWatch 이상 징후 분석, 긴급 조치 가이드라인 등 무엇이든 문의하세요.
+                    </div>
+                </div>
+
+                <!-- 빠른 질의 버튼 -->
+                <div class="quick-prompts">
+                    <button class="quick-btn" onclick="sendQuickPrompt('🔍 전체 시스템 헬스체크 및 요약 보고서 작성해줘')">🔍 전체 시스템 헬스체크</button>
+                    <button class="quick-btn" onclick="sendQuickPrompt('⚡ ECS CPU 사용률 이상 시 SRE 자율 대응 절차는?')">⚡ CPU 과부하 SRE 대응</button>
+                    <button class="quick-btn" onclick="sendQuickPrompt('🗄️ RDS Slow Query 및 Algorithmic DoS 공격 판정 기준 알려줘')">🗄️ RDS DoS 판정 기준</button>
+                    <button class="quick-btn" onclick="sendQuickPrompt('🚨 GuardDuty 알람 발생 시 SOAR 자율 격리 가이드라인')">🚨 SOAR 자율 격리 가이드</button>
+                </div>
+
+                <!-- 챗 입력창 -->
+                <div class="chat-input-area">
+                    <input type="text" class="chat-input" id="chat-input" placeholder="운영자 질의나 장애 진단 요청을 입력하세요... (Enter)" onkeydown="if(event.key==='Enter') sendMessage()">
+                    <button class="chat-send-btn" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i> 전송</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function fetchMetrics() {
+            try {
+                const res = await fetch('/api/ops/metrics');
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.database) {
+                        document.getElementById('db-status').textContent = data.database.status.toUpperCase();
+                        document.getElementById('db-latency').textContent = `Latency: ${data.database.latency_ms}ms`;
+                    }
+                    if (data.ecs) {
+                        document.getElementById('ecs-status').textContent = data.ecs.status;
+                        document.getElementById('ecs-detail').textContent = `${data.ecs.service} (${data.ecs.task_definition})`;
+                    }
+                }
+            } catch (e) {
+                console.log('Metrics fetch fallback', e);
+            }
+        }
+
+        async function triggerOpsTest(endpoint, label) {
+            const resultEl = document.getElementById('test-result');
+            resultEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${label} 요청 전송 중...`;
+            try {
+                const res = await fetch(endpoint, { method: 'POST' });
+                const data = await res.json();
+                resultEl.innerHTML = `<span style="color:#22C55E;"><i class="fa-solid fa-check"></i> ${label} 완료: ${data.message || '성공'}</span>`;
+                fetchMetrics();
+            } catch (e) {
+                resultEl.innerHTML = `<span style="color:#E50914;"><i class="fa-solid fa-xmark"></i> ${label} 오류 발생</span>`;
+            }
+        }
+
+        function refreshMetrics() {
+            fetchMetrics();
+            const resultEl = document.getElementById('test-result');
+            resultEl.innerHTML = `<span style="color:#3B82F6;"><i class="fa-solid fa-check"></i> 인프라 메트릭이 최신 상태로 갱신되었습니다.</span>`;
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            input.value = '';
+            appendMessage('user', message);
+
+            const loadingId = appendMessage('ai', '<i class="fa-solid fa-spinner fa-spin"></i> Bedrock 인프라 지표 및 지식베이스 추론 중...');
+
+            try {
+                const res = await fetch('/api/ops/ai-chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message })
+                });
+
+                const data = await res.json();
+                updateMessage(loadingId, formatReply(data.reply || '진단 결과를 불러올 수 없습니다.'));
+            } catch (e) {
+                updateMessage(loadingId, '⚠️ 백엔드 API 연결에 실패했습니다. AIOps 엔드포인트 상태를 확인하세요.');
+            }
+        }
+
+        function sendQuickPrompt(promptText) {
+            document.getElementById('chat-input').value = promptText;
+            sendMessage();
+        }
+
+        function appendMessage(role, content) {
+            const container = document.getElementById('chat-messages');
+            const msgDiv = document.createElement('div');
+            const id = 'msg-' + Date.now();
+            msgDiv.id = id;
+            msgDiv.className = `msg-bubble ${role === 'user' ? 'msg-user' : 'msg-ai'}`;
+            msgDiv.innerHTML = content;
+            container.appendChild(msgDiv);
+            container.scrollTop = container.scrollHeight;
+            return id;
+        }
+
+        function updateMessage(id, content) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.innerHTML = content;
+                const container = document.getElementById('chat-messages');
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+
+        function formatReply(text) {
+            return text
+                .replace(/\n\n/g, '<br><br>')
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
+                .replace(/`([^`]+)`/g, '<code style="background:#111; padding:2px 4px; border-radius:3px; color:#A3E635;">$1</code>');
+        }
+
+        fetchMetrics();
+        setInterval(fetchMetrics, 10000);
+    </script>
+</body>
+</html>
