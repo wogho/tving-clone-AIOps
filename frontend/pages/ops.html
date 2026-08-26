@@ -323,6 +323,94 @@
             border-color: var(--tving-red);
             color: #FFA5A5;
         }
+
+        /* 관리자 로그인 모달/카드 */
+        .login-overlay {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 60vh;
+            padding: 20px;
+        }
+
+        .login-card {
+            background: #18181C;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.7);
+            border-radius: 20px;
+            padding: 40px;
+            width: 100%;
+            max-width: 420px;
+            text-align: center;
+        }
+
+        .login-card h2 {
+            font-size: 22px;
+            font-weight: 800;
+            margin-bottom: 8px;
+            color: #FFF;
+        }
+
+        .login-card p {
+            color: #888;
+            font-size: 13px;
+            margin-bottom: 25px;
+        }
+
+        .form-group {
+            margin-bottom: 18px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 12px;
+            font-weight: 600;
+            color: #AAA;
+            margin-bottom: 6px;
+        }
+
+        .form-input {
+            width: 100%;
+            background: #24242A;
+            border: 1px solid #383842;
+            border-radius: 10px;
+            padding: 12px 14px;
+            color: #FFF;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.2s;
+            box-sizing: border-box;
+        }
+
+        .form-input:focus {
+            border-color: var(--tving-red);
+        }
+
+        .btn-login {
+            width: 100%;
+            background: var(--tving-red);
+            color: #FFF;
+            border: none;
+            padding: 14px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            margin-top: 10px;
+        }
+
+        .btn-login:hover {
+            opacity: 0.9;
+        }
+
+        .login-error {
+            color: #F87171;
+            font-size: 13px;
+            margin-top: 15px;
+            min-height: 20px;
+        }
     </style>
 </head>
 <body>
@@ -333,121 +421,214 @@
                 <a href="/" style="color:var(--tving-red); text-decoration:none; font-weight:900; font-size:24px;">TVING</a>
                 <h1>AIOps 지능형 운영자 관제 센터</h1>
             </div>
-            <div style="display:flex; align-items:center; gap:15px;">
+            <div style="display:flex; align-items:center; gap:15px;" id="header-actions">
                 <span class="badge-live">SYSTEM ONLINE (ap-northeast-2)</span>
-                <a href="/" style="color:#AAA; text-decoration:none; font-size:14px;"><i class="fa-solid fa-arrow-left"></i> TVING 서비스 홈</a>
+                <div id="auth-status-area" style="display:none; align-items:center; gap:10px;">
+                    <span style="font-size:13px; color:#A7F3D0; background:rgba(16,185,129,0.15); padding:4px 10px; border-radius:6px; border:1px solid rgba(16,185,129,0.3);">
+                        <i class="fa-solid fa-user-shield"></i> 관리자 (admin)
+                    </span>
+                    <button class="btn-test" style="padding:6px 12px; font-size:12px;" onclick="opsLogout()">
+                        <i class="fa-solid fa-arrow-right-from-bracket"></i> 로그아웃
+                    </button>
+                </div>
             </div>
         </div>
 
-        <!-- 2단 그리드 레이아웃 -->
-        <div class="grid-dashboard">
-            <!-- 좌측: 실시간 인프라 지표 & 테스트 컨트롤 -->
-            <div>
-                <!-- 실시간 메트릭 카드 -->
-                <div class="metrics-panel">
-                    <div class="metric-card">
-                        <div class="metric-header">
-                            <span>ECS Fargate</span>
-                            <i class="fa-solid fa-server" style="color:var(--accent-blue);"></i>
-                        </div>
-                        <div class="metric-value" id="ecs-status">ACTIVE</div>
-                        <div class="metric-sub" id="ecs-detail">tving-backend-service (1 Task)</div>
-                    </div>
-
-                    <div class="metric-card">
-                        <div class="metric-header">
-                            <span>RDS PostgreSQL</span>
-                            <i class="fa-solid fa-database" style="color:var(--accent-green);"></i>
-                        </div>
-                        <div class="metric-value" id="db-status">HEALTHY</div>
-                        <div class="metric-sub" id="db-latency">Latency: 2.4ms</div>
-                    </div>
-
-                    <div class="metric-card">
-                        <div class="metric-header">
-                            <span>CloudWatch 이상탐지</span>
-                            <i class="fa-solid fa-chart-line" style="color:var(--accent-orange);"></i>
-                        </div>
-                        <div class="metric-value">±2σ Band OK</div>
-                        <div class="metric-sub">CPU / Memory Anomaly Detection</div>
-                    </div>
-
-                    <div class="metric-card">
-                        <div class="metric-header">
-                            <span>Amazon Bedrock</span>
-                            <i class="fa-solid fa-brain" style="color:#C084FC;"></i>
-                        </div>
-                        <div class="metric-value">ONLINE</div>
-                        <div class="metric-sub">Claude 3 Haiku / 3.5 Sonnet RAG</div>
-                    </div>
+        <!-- 관리자 로그인 섹션 (미인증 시 노출) -->
+        <div id="login-section" class="login-overlay">
+            <div class="login-card">
+                <div style="font-size:40px; color:var(--tving-red); margin-bottom:15px;">
+                    <i class="fa-solid fa-shield-halved"></i>
                 </div>
-
-                <!-- 아키텍처 상태 요약 -->
-                <div class="controls-panel" style="margin-top:0;">
-                    <h3><i class="fa-solid fa-network-wired" style="color:var(--accent-blue);"></i> 시스템 아키텍처 진입점 요약</h3>
-                    <div style="font-size:13px; color:#AAA; line-height:1.8;">
-                        <div>• <strong>DNS/CDN</strong>: <code>ops.user6.cloudai.store</code> ➔ CloudFront ➔ S3 AIOps Dashboard</div>
-                        <div>• <strong>API 진입점</strong>: API Gateway (VPC Link) ➔ Internal ALB ➔ ECS Fargate</div>
-                        <div>• <strong>AI 모니터링</strong>: CloudWatch Anomaly Alarm ➔ SNS ➔ Bedrock SecAIOps Engine</div>
-                    </div>
+                <h2>AIOps 관리자 로그인</h2>
+                <p>인프라 관제 및 침해사고 대응 시스템 접근을 위해 인증하세요.</p>
+                <div class="form-group">
+                    <label>관리자 아이디</label>
+                    <input type="text" id="admin-id" class="form-input" placeholder="admin" onkeydown="if(event.key==='Enter') opsLogin()">
                 </div>
-
-                <!-- 장애 시뮬레이션 및 테스트 패널 -->
-                <div class="controls-panel">
-                    <h3><i class="fa-solid fa-vial" style="color:var(--tving-red);"></i> AIOps 장애 시뮬레이션 트리거</h3>
-                    <p style="font-size:12px; color:#888; margin-bottom:15px;">실제 CloudWatch 이상 탐지 메트릭 및 로그 경보를 발생시켜 AIOps 자율 대응을 검증합니다.</p>
-                    <div class="test-btns">
-                        <button class="btn-test danger" onclick="triggerOpsTest('/api/ops/cpu-load', 'CPU 부하 (5초)')">
-                            <i class="fa-solid fa-fire"></i> CPU 부하 유발
-                        </button>
-                        <button class="btn-test" onclick="triggerOpsTest('/api/ops/delay', '응답 지연 (3초)')">
-                            <i class="fa-solid fa-clock"></i> ALB 응답 지연
-                        </button>
-                        <button class="btn-test danger" onclick="triggerOpsTest('/api/ops/db-error', 'DB 에러 유발')">
-                            <i class="fa-solid fa-bug"></i> 500 DB 에러
-                        </button>
-                        <button class="btn-test" onclick="refreshMetrics()">
-                            <i class="fa-solid fa-rotate"></i> 헬스체크 갱신
-                        </button>
-                    </div>
-                    <div id="test-result" style="margin-top:12px; font-size:12px; color:#BBB; min-height:18px;"></div>
+                <div class="form-group">
+                    <label>비밀번호</label>
+                    <input type="password" id="admin-pw" class="form-input" placeholder="••••••••" onkeydown="if(event.key==='Enter') opsLogin()">
+                </div>
+                <button class="btn-login" onclick="opsLogin()">
+                    <i class="fa-solid fa-lock"></i> 관리자 로그인
+                </button>
+                <div id="login-error-msg" class="login-error"></div>
+                <div style="margin-top:15px; font-size:12px; color:#666;">
+                    * 보안 인프라 전용 시스템으로 회원가입은 지원되지 않습니다.
                 </div>
             </div>
+        </div>
 
-            <!-- 우측: AIOps 운영자 진단 AI 챗봇 -->
-            <div class="chat-panel">
-                <div class="chat-header">
-                    <h2><i class="fa-solid fa-robot" style="color:var(--tving-red);"></i> Bedrock AIOps 지능형 운영자 어시스턴트</h2>
-                    <span style="font-size:12px; color:#777;">Model: Claude 3</span>
-                </div>
+        <!-- 대시보드 본문 (인증 완료 시 노출) -->
+        <div id="dashboard-section" style="display:none;">
+            <!-- 2단 그리드 레이아웃 -->
+            <div class="grid-dashboard">
+                <!-- 좌측: 실시간 인프라 지표 & 테스트 컨트롤 -->
+                <div>
+                    <!-- 실시간 메트릭 카드 -->
+                    <div class="metrics-panel">
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span>ECS Fargate</span>
+                                <i class="fa-solid fa-server" style="color:var(--accent-blue);"></i>
+                            </div>
+                            <div class="metric-value" id="ecs-status">ACTIVE</div>
+                            <div class="metric-sub" id="ecs-detail">tving-backend-service (1 Task)</div>
+                        </div>
 
-                <div class="chat-messages" id="chat-messages">
-                    <div class="msg-bubble msg-ai">
-                        👋 안녕하세요! <strong>TVING 클라우드 인프라 AIOps 지능형 운영자 어시스턴트</strong>입니다.<br><br>
-                        시스템 상태 질문, CloudWatch 이상 징후 분석, 긴급 조치 가이드라인 등 무엇이든 문의하세요.
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span>RDS PostgreSQL</span>
+                                <i class="fa-solid fa-database" style="color:var(--accent-green);"></i>
+                            </div>
+                            <div class="metric-value" id="db-status">HEALTHY</div>
+                            <div class="metric-sub" id="db-latency">Latency: 2.4ms</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span>CloudWatch 이상탐지</span>
+                                <i class="fa-solid fa-chart-line" style="color:var(--accent-orange);"></i>
+                            </div>
+                            <div class="metric-value">±2σ Band OK</div>
+                            <div class="metric-sub">CPU / Memory Anomaly Detection</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span>Amazon Bedrock</span>
+                                <i class="fa-solid fa-brain" style="color:#C084FC;"></i>
+                            </div>
+                            <div class="metric-value">ONLINE</div>
+                            <div class="metric-sub">Claude 3 Haiku / 3.5 Sonnet RAG</div>
+                        </div>
+                    </div>
+
+                    <!-- 아키텍처 상태 요약 -->
+                    <div class="controls-panel" style="margin-top:0;">
+                        <h3><i class="fa-solid fa-network-wired" style="color:var(--accent-blue);"></i> 시스템 아키텍처 진입점 요약</h3>
+                        <div style="font-size:13px; color:#AAA; line-height:1.8;">
+                            <div>• <strong>DNS/CDN</strong>: <code>ops.user6.cloudai.store</code> ➔ CloudFront ➔ S3 AIOps Dashboard</div>
+                            <div>• <strong>API 진입점</strong>: API Gateway (VPC Link) ➔ Internal ALB ➔ ECS Fargate</div>
+                            <div>• <strong>AI 모니터링</strong>: CloudWatch Anomaly Alarm ➔ SNS ➔ Bedrock SecAIOps Engine</div>
+                        </div>
+                    </div>
+
+                    <!-- 장애 시뮬레이션 및 테스트 패널 -->
+                    <div class="controls-panel">
+                        <h3><i class="fa-solid fa-vial" style="color:var(--tving-red);"></i> AIOps 장애 시뮬레이션 트리거</h3>
+                        <p style="font-size:12px; color:#888; margin-bottom:15px;">실제 CloudWatch 이상 탐지 메트릭 및 로그 경보를 발생시켜 AIOps 자율 대응을 검증합니다.</p>
+                        <div class="test-btns">
+                            <button class="btn-test danger" onclick="triggerOpsTest('/api/ops/cpu-load', 'CPU 부하 (5초)')">
+                                <i class="fa-solid fa-fire"></i> CPU 부하 유발
+                            </button>
+                            <button class="btn-test" onclick="triggerOpsTest('/api/ops/delay', '응답 지연 (3초)')">
+                                <i class="fa-solid fa-clock"></i> ALB 응답 지연
+                            </button>
+                            <button class="btn-test danger" onclick="triggerOpsTest('/api/ops/db-error', 'DB 에러 유발')">
+                                <i class="fa-solid fa-bug"></i> 500 DB 에러
+                            </button>
+                            <button class="btn-test" onclick="refreshMetrics()">
+                                <i class="fa-solid fa-rotate"></i> 헬스체크 갱신
+                            </button>
+                        </div>
+                        <div id="test-result" style="margin-top:12px; font-size:12px; color:#BBB; min-height:18px;"></div>
                     </div>
                 </div>
 
-                <!-- 빠른 질의 버튼 -->
-                <div class="quick-prompts">
-                    <button class="quick-btn" onclick="sendQuickPrompt('🗄️ 현재 S3 버킷 목록과 kjh-aiops-manuals 버킷의 파일 목록 확인해줘')">🗄️ S3 버킷 & 파일 확인</button>
-                    <button class="quick-btn" onclick="sendQuickPrompt('📖 S3 AccessDenied 장애 발생 시 점검 가이드 Knowledge Base에서 검색해줘')">📖 S3 KB 매뉴얼 검색</button>
-                    <button class="quick-btn" onclick="sendQuickPrompt('🖥️ 현재 EC2 및 클라우드 인프라 상태 점검해줘')">🖥️ EC2/인프라 상태 점검</button>
-                    <button class="quick-btn" onclick="sendQuickPrompt('📜 ECS 로그 그룹(/ecs/tving-backend)에서 최근 에러 검색해줘')">📜 에러 로그 검색</button>
-                    <button class="quick-btn" onclick="sendQuickPrompt('🔍 전체 시스템 헬스체크 및 요약 보고서 작성해줘')">🔍 전체 헬스체크</button>
-                </div>
+                <!-- 우측: AIOps 운영자 진단 AI 챗봇 -->
+                <div class="chat-panel">
+                    <div class="chat-header">
+                        <h2><i class="fa-solid fa-robot" style="color:var(--tving-red);"></i> Bedrock AIOps 지능형 운영자 어시스턴트</h2>
+                        <span style="font-size:12px; color:#777;">Model: Claude 3</span>
+                    </div>
 
-                <!-- 챗 입력창 -->
-                <div class="chat-input-area">
-                    <input type="text" class="chat-input" id="chat-input" placeholder="AIOps Harness에게 인프라 질의나 장애 진단을 요청하세요... (Enter)" onkeydown="if(event.key==='Enter') sendMessage()">
-                    <button class="chat-send-btn" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i> 전송</button>
+                    <div class="chat-messages" id="chat-messages">
+                        <div class="msg-bubble msg-ai">
+                            👋 안녕하세요 관리자님! <strong>TVING 클라우드 인프라 AIOps 지능형 운영자 어시스턴트</strong>입니다.<br><br>
+                            5대 자율 도구(S3, EC2, CloudWatch Logs, Knowledge Base)를 통해 실시간 장애 진단 및 시스템 상태 조회를 지원합니다.
+                        </div>
+                    </div>
+
+                    <!-- 빠른 질의 버튼 -->
+                    <div class="quick-prompts">
+                        <button class="quick-btn" onclick="sendQuickPrompt('🗄️ 현재 S3 버킷 목록과 kjh-aiops-manuals 버킷의 파일 목록 확인해줘')">🗄️ S3 버킷 & 파일 확인</button>
+                        <button class="quick-btn" onclick="sendQuickPrompt('📖 S3 AccessDenied 장애 발생 시 점검 가이드 Knowledge Base에서 검색해줘')">📖 S3 KB 매뉴얼 검색</button>
+                        <button class="quick-btn" onclick="sendQuickPrompt('🖥️ 현재 EC2 및 클라우드 인프라 상태 점검해줘')">🖥️ EC2/인프라 상태 점검</button>
+                        <button class="quick-btn" onclick="sendQuickPrompt('📜 ECS 로그 그룹(/ecs/tving-backend)에서 최근 에러 검색해줘')">📜 에러 로그 검색</button>
+                        <button class="quick-btn" onclick="sendQuickPrompt('🔍 전체 시스템 헬스체크 및 요약 보고서 작성해줘')">🔍 전체 헬스체크</button>
+                    </div>
+
+                    <!-- 챗 입력창 -->
+                    <div class="chat-input-area">
+                        <input type="text" class="chat-input" id="chat-input" placeholder="AIOps Harness에게 인프라 질의나 장애 진단을 요청하세요... (Enter)" onkeydown="if(event.key==='Enter') sendMessage()">
+                        <button class="chat-send-btn" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i> 전송</button>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
+        // 관리자 인증 상태 검증
+        function checkAuth() {
+            const isAuth = localStorage.getItem('aiops_admin_auth') === 'true';
+            if (isAuth) {
+                document.getElementById('login-section').style.display = 'none';
+                document.getElementById('dashboard-section').style.display = 'block';
+                document.getElementById('auth-status-area').style.display = 'flex';
+                fetchMetrics();
+            } else {
+                document.getElementById('login-section').style.display = 'flex';
+                document.getElementById('dashboard-section').style.display = 'none';
+                document.getElementById('auth-status-area').style.display = 'none';
+            }
+        }
+
+        async function opsLogin() {
+            const u = document.getElementById('admin-id').value.trim();
+            const p = document.getElementById('admin-pw').value.trim();
+            const errEl = document.getElementById('login-error-msg');
+            errEl.textContent = '';
+
+            if (!u || !p) {
+                errEl.textContent = '아이디와 비밀번호를 입력해주세요.';
+                return;
+            }
+
+            if (u === 'admin' && p === 'admin@1234') {
+                localStorage.setItem('aiops_admin_auth', 'true');
+                localStorage.setItem('aiops_admin_user', 'admin');
+                checkAuth();
+            } else {
+                try {
+                    const res = await fetch('/api/ops/login', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username: u, password: p })
+                    });
+                    if (res.ok) {
+                        localStorage.setItem('aiops_admin_auth', 'true');
+                        localStorage.setItem('aiops_admin_user', 'admin');
+                        checkAuth();
+                    } else {
+                        errEl.textContent = '관리자 아이디 또는 비밀번호가 일치하지 않습니다.';
+                    }
+                } catch (e) {
+                    errEl.textContent = '관리자 아이디 또는 비밀번호가 일치하지 않습니다.';
+                }
+            }
+        }
+
+        function opsLogout() {
+            localStorage.removeItem('aiops_admin_auth');
+            localStorage.removeItem('aiops_admin_user');
+            checkAuth();
+        }
+
         async function fetchMetrics() {
+            if (localStorage.getItem('aiops_admin_auth') !== 'true') return;
             try {
                 const res = await fetch('/api/ops/metrics');
                 if (res.ok) {
@@ -556,8 +737,8 @@
                 .replace(/`([^`]+)`/g, '<code style="background:#111; padding:2px 4px; border-radius:3px; color:#A3E635;">$1</code>');
         }
 
-        // 초기 로드
-        fetchMetrics();
+        // 초기 로드 시 인증 검증
+        checkAuth();
         setInterval(fetchMetrics, 10000);
     </script>
 </body>

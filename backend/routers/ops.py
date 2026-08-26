@@ -37,6 +37,27 @@ class OpsChatRequest(BaseModel):
     include_metrics: Optional[bool] = True
 
 
+class OpsLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/login")
+def ops_admin_login(req: OpsLoginRequest):
+    """AIOps 관제 센터 전용 관리자 로그인 API"""
+    if req.username == "admin" and req.password == "admin@1234":
+        return {
+            "status": "success",
+            "message": "AIOps 관리자 인증 성공",
+            "user": {
+                "username": "admin",
+                "role": "SUPER_ADMIN",
+                "token": "ops-admin-session-token-761018884888"
+            }
+        }
+    raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+
+
 @router.get("/status")
 def ops_status():
     """AIOps 모니터링 상태 확인"""
@@ -399,7 +420,7 @@ def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
     ]
 
     tools_used_history = []
-    max_turns = 5
+    max_turns = 3
 
     try:
         for _ in range(max_turns):
@@ -408,7 +429,7 @@ def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
                 messages=messages,
                 system=[{"text": system_prompt}],
                 toolConfig=AIOPS_TOOL_CONFIG,
-                inferenceConfig={"maxTokens": 2048, "temperature": 0.2, "topP": 0.9}
+                inferenceConfig={"maxTokens": 1024, "temperature": 0.2, "topP": 0.9}
             )
 
             stop_reason = response.get("stopReason")
