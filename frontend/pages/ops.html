@@ -411,6 +411,94 @@
             margin-top: 15px;
             min-height: 20px;
         }
+
+        /* KB 관리 모달 */
+        .modal-backdrop {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.75);
+            backdrop-filter: blur(8px);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+
+        .modal-content {
+            background: #18181D;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.8);
+            border-radius: 20px;
+            width: 90%;
+            max-width: 780px;
+            max-height: 90vh;
+            overflow-y: auto;
+            padding: 30px;
+            box-sizing: border-box;
+            position: relative;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            font-size: 20px;
+            color: #FFF;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: #888;
+            font-size: 20px;
+            cursor: pointer;
+            transition: color 0.2s;
+        }
+
+        .modal-close:hover {
+            color: #FFF;
+        }
+
+        .template-btn {
+            background: #2A2A35;
+            border: 1px solid #444;
+            color: #C084FC;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .template-btn:hover {
+            background: rgba(192, 132, 252, 0.2);
+            border-color: #C084FC;
+        }
+
+        .kb-file-badge {
+            background: #22222A;
+            border: 1px solid #383842;
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #93C5FD;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
     </style>
 </head>
 <body>
@@ -421,15 +509,72 @@
                 <a href="/" style="color:var(--tving-red); text-decoration:none; font-weight:900; font-size:24px;">TVING</a>
                 <h1>AIOps 지능형 운영자 관제 센터</h1>
             </div>
-            <div style="display:flex; align-items:center; gap:15px;" id="header-actions">
+            <div style="display:flex; align-items:center; gap:12px;" id="header-actions">
                 <span class="badge-live">SYSTEM ONLINE (ap-northeast-2)</span>
                 <div id="auth-status-area" style="display:none; align-items:center; gap:10px;">
+                    <button class="btn-test" style="background:rgba(59,130,246,0.2); border-color:var(--accent-blue); color:#93C5FD; padding:6px 12px; font-size:12px;" onclick="openKBModal()">
+                        <i class="fa-solid fa-book-open"></i> KB 매뉴얼/스킬 관리
+                    </button>
                     <span style="font-size:13px; color:#A7F3D0; background:rgba(16,185,129,0.15); padding:4px 10px; border-radius:6px; border:1px solid rgba(16,185,129,0.3);">
                         <i class="fa-solid fa-user-shield"></i> 관리자 (admin)
                     </span>
                     <button class="btn-test" style="padding:6px 12px; font-size:12px;" onclick="opsLogout()">
                         <i class="fa-solid fa-arrow-right-from-bracket"></i> 로그아웃
                     </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- KB 매뉴얼 추가/관리 팝업 모달 -->
+        <div id="kb-modal" class="modal-backdrop" style="display:none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2><i class="fa-solid fa-brain" style="color:#C084FC;"></i> Bedrock Knowledge Base 매뉴얼/스킬 관리</h2>
+                    <button class="modal-close" onclick="closeKBModal()"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+
+                <!-- 현재 등록된 매뉴얼 리스트 -->
+                <div style="margin-bottom:20px; background:#111116; border:1px solid #282832; border-radius:12px; padding:15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <span style="font-size:13px; font-weight:700; color:#AAA;">
+                            <i class="fa-solid fa-folder-open" style="color:var(--accent-orange);"></i> 현재 S3 매뉴얼 목록 (<code>s3://kjh-aiops-manuals</code>)
+                        </span>
+                        <button class="btn-test" style="padding:4px 8px; font-size:11px;" onclick="loadKBFileList()">
+                            <i class="fa-solid fa-rotate"></i> 새로고침
+                        </button>
+                    </div>
+                    <div id="kb-file-list" style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <span style="color:#777; font-size:12px;">파일 목록을 불러오는 중...</span>
+                    </div>
+                </div>
+
+                <!-- 신규 .md 매뉴얼 등록 폼 -->
+                <div style="background:#1C1C24; border:1px solid #333344; border-radius:14px; padding:20px;">
+                    <h3 style="margin-top:0; font-size:15px; color:#FFF; margin-bottom:15px;">
+                        <i class="fa-solid fa-plus-circle" style="color:var(--accent-green);"></i> 신규 장애 대응 매뉴얼(.md) 추가 & 동기화
+                    </h3>
+                    
+                    <div class="form-group">
+                        <label>매뉴얼 파일명 (.md)</label>
+                        <input type="text" id="kb-filename" class="form-input" placeholder="예: rds-troubleshooting.md">
+                    </div>
+
+                    <div style="margin-bottom:12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                        <span style="font-size:12px; color:#888;">템플릿 빠른 삽입:</span>
+                        <button class="template-btn" onclick="applyTemplate('rds')">🗄️ RDS CPU 95% 템플릿</button>
+                        <button class="template-btn" onclick="applyTemplate('ec2')">🖥️ EC2/컨테이너 장애 템플릿</button>
+                        <button class="template-btn" onclick="applyTemplate('security')">🛡️ SSRF/보안 침해 템플릿</button>
+                    </div>
+
+                    <div class="form-group">
+                        <label>마크다운 본문 내용</label>
+                        <textarea id="kb-content" class="form-input" style="height:180px; font-family:monospace; font-size:13px; line-height:1.5;" placeholder="# 장애 대응 매뉴얼 제목&#10;&#10;## 1. 증상 분류&#10;...&#10;&#10;## 2. 긴급 조치 절차&#10;..."></textarea>
+                    </div>
+
+                    <button class="btn-login" style="background:#2563EB; display:flex; justify-content:center; align-items:center; gap:8px;" onclick="uploadKBManual()">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> S3 저장 및 Bedrock Knowledge Base 동기화 (Sync)
+                    </button>
+                    <div id="kb-upload-result" style="margin-top:12px; font-size:13px; min-height:18px;"></div>
                 </div>
             </div>
         </div>
@@ -735,6 +880,119 @@
                 .replace(/\*(.*?)\*/g, '<em>$1</em>')
                 .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
                 .replace(/`([^`]+)`/g, '<code style="background:#111; padding:2px 4px; border-radius:3px; color:#A3E635;">$1</code>');
+        }
+
+        // ----------------------------------------------------
+        // KB 매뉴얼 모달 관리 스크립트
+        // ----------------------------------------------------
+        function openKBModal() {
+            document.getElementById('kb-modal').style.display = 'flex';
+            loadKBFileList();
+        }
+
+        function closeKBModal() {
+            document.getElementById('kb-modal').style.display = 'none';
+        }
+
+        async function loadKBFileList() {
+            const listEl = document.getElementById('kb-file-list');
+            listEl.innerHTML = '<span style="color:#888; font-size:12px;"><i class="fa-solid fa-spinner fa-spin"></i> S3 매뉴얼 목록 조회 중...</span>';
+            try {
+                const res = await fetch('/api/ops/kb/list');
+                const data = await res.json();
+                if (data.files && data.files.length > 0) {
+                    listEl.innerHTML = '';
+                    data.files.forEach(f => {
+                        const badge = document.createElement('div');
+                        badge.className = 'kb-file-badge';
+                        badge.innerHTML = `<i class="fa-regular fa-file-lines" style="color:#C084FC;"></i> <strong>${f.key}</strong> <span style="color:#777; font-size:11px;">(${f.size} B)</span>`;
+                        listEl.appendChild(badge);
+                    });
+                } else {
+                    listEl.innerHTML = '<span style="color:#888; font-size:12px;">등록된 매뉴얼 파일이 없습니다.</span>';
+                }
+            } catch (e) {
+                listEl.innerHTML = '<span style="color:#F87171; font-size:12px;">매뉴얼 목록 조회 실패</span>';
+            }
+        }
+
+        function applyTemplate(type) {
+            const nameInput = document.getElementById('kb-filename');
+            const contentInput = document.getElementById('kb-content');
+
+            if (type === 'rds') {
+                nameInput.value = 'rds-slowquery-response.md';
+                contentInput.value = `# RDS CPU 95% 및 Slow Query 대응 매뉴얼
+
+## 1. 개요 및 증상 분류
+CloudWatch RDS CPUUtilization 95% 경보 발생 시 3대 가설에 따라 분류합니다:
+- **A. 인기작 폭증 (Flash Crowd)**: ECS 오토스케일링 및 Redis 캐시 TTL 연장
+- **B. 배포 쿼리 버그 (N+1 Query)**: 신규 버전 즉시 롤백 및 Query Rewrite
+- **C. Algorithmic DoS 공격**: 특정 파라미터 반복 호출 IP/토큰 WAF 차단
+
+## 2. 점검 및 조치 절차
+1. Performance Insights에서 Top SQL 및 Wait Event 확인
+2. 쿼리 파라미터 이상 집중 시 WAF Rate-based Rule 적용
+3. 쿼리 개선 불가 시 RDS Read Replica 긴급 확장`;
+            } else if (type === 'ec2') {
+                nameInput.value = 'ecs-container-troubleshooting.md';
+                contentInput.value = `# ECS Fargate 컨테이너 장애 대응 매뉴얼
+
+## 1. 헬스체크 실패 및 503 대응
+ALB Target Group Health Check 실패 시 다음을 확인합니다:
+- `/health` 엔드포인트 응답 시간 (정상 200 OK)
+- 컨테이너 메모리 부족(OOMKilled) 여부 확인
+- 태스크 인스턴스 Desired Count 확장
+
+## 2. 로그 확인 절차
+1. CloudWatch Logs 그룹 \`/ecs/tving-backend\` 에러 필터링
+2. DB 연결 풀(Connection Pool) 고갈 여부 점검`;
+            } else if (type === 'security') {
+                nameInput.value = 'ssrf-guardduty-response.md';
+                contentInput.value = `# SSRF 및 GuardDuty 보안 침해 대응 가이드
+
+## 1. 증상 및 이상 징후
+- IMDSv2 우회 시도 또는 비정상 내부 IP 호출 탐지
+- GuardDuty \`UnauthorizedAccess:IAMUser/InstanceCredentialExfiltration\` 경보
+
+## 2. 긴급 격리 절차 (SOAR)
+1. 침해된 ECS 태스크 즉시 중지 및 격리 Security Group 전환
+2. 유출 의심 IAM Role 세션 취소 (Revoke Active Sessions)
+3. WAF에서 공격자 Source IP 영구 차단`;
+            }
+        }
+
+        async function uploadKBManual() {
+            const filename = document.getElementById('kb-filename').value.trim();
+            const content = document.getElementById('kb-content').value.trim();
+            const resEl = document.getElementById('kb-upload-result');
+
+            if (!filename || !content) {
+                resEl.innerHTML = '<span style="color:#F87171;"><i class="fa-solid fa-triangle-exclamation"></i> 파일명과 내용을 모두 입력해주세요.</span>';
+                return;
+            }
+
+            resEl.innerHTML = '<span style="color:#93C5FD;"><i class="fa-solid fa-spinner fa-spin"></i> S3 업로드 및 Bedrock Knowledge Base 동기화 인덱싱 진행 중...</span>';
+
+            try {
+                const res = await fetch('/api/ops/kb/upload', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: filename, content: content })
+                });
+
+                const data = await res.json();
+                if (res.ok) {
+                    resEl.innerHTML = `<span style="color:#22C55E;"><i class="fa-solid fa-check-circle"></i> <strong>${data.filename}</strong> S3 업로드 완료! Bedrock KB 동기화가 시작되었습니다. (Job ID: ${data.job_id || 'Started'})</span>`;
+                    loadKBFileList();
+                    // 챗봇에 알림 메시지 추가
+                    appendMessage('ai', `📚 <strong>새로운 매뉴얼 [${data.filename}]이 Knowledge Base에 등록되었습니다.</strong><br>이제 하네스 챗봇에게 해당 매뉴얼 내용에 대해 질문하실 수 있습니다!`);
+                } else {
+                    resEl.innerHTML = `<span style="color:#F87171;"><i class="fa-solid fa-xmark"></i> 업로드 실패: ${data.detail || '오류'}</span>`;
+                }
+            } catch (e) {
+                resEl.innerHTML = '<span style="color:#F87171;"><i class="fa-solid fa-xmark"></i> API 요청 실패</span>';
+            }
         }
 
         // 초기 로드 시 인증 검증

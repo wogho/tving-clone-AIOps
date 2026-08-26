@@ -105,12 +105,16 @@ def get_ops_metrics(db: Session = Depends(get_db)):
 
 # Knowledge Base ID 및 Lambda Tool Provider
 KB_ID = os.getenv("KNOWLEDGE_BASE_ID", "CW9N0QAOGB")
+KB_DATA_SOURCE_ID = os.getenv("KB_DATA_SOURCE_ID", "TPWBMJCRAO")
+KB_MANUALS_BUCKET = os.getenv("KB_MANUALS_BUCKET", "kjh-aiops-manuals")
 AIOPS_TOOL_LAMBDA = os.getenv("AIOPS_TOOL_LAMBDA", "aiops-agent-tools")
 
-# Bedrock Agent Runtime 클라이언트
+# Bedrock Agent & Runtime 클라이언트
 try:
+    bedrock_agent_client = boto3.client("bedrock-agent", region_name=AWS_REGION)
     bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=AWS_REGION)
 except Exception:
+    bedrock_agent_client = None
     bedrock_agent_runtime = None
 
 # EC2, S3, Logs 클라이언트
@@ -122,6 +126,121 @@ except Exception:
     ec2_client = None
     s3_client = None
     logs_client = None
+
+
+class KBUploadRequest(BaseModel):
+    filename: str
+    content: str
+    category: Optional[str] = "일반"
+
+
+@router.get("/kb/list")
+def list_kb_manuals():
+    """Knowledge Base에 등록된 S3 매뉴얼 파일 목록 및 동기화 상태 조회"""
+    files = []
+    if s3_client:
+        try:
+            resp = s3_client.list_objects_v2(Bucket=KB_MANUALS_BUCKET)
+            for item in resp.get("Contents", []):
+                files.append({
+                    "key": item["Key"],
+                    "size": item["Size"],
+                    "lastModified": item["LastModified"].strftime("%Y-%m-%d %H:%M:%S")
+                })
+        except Exception as e:
+            files = [{"error": str(e)}]
+
+    # 최신 동기화 상태 조회
+    sync_status = "UNKNOWN"
+    if bedrock_agent_client:
+        try:
+            jobs = bedrock_agent_client.list_ingestion_jobs(
+                knowledgeBaseId=KB_ID,
+                dataSourceId=KB_DATA_SOURCE_ID,
+                maxResults=1
+            )
+            job_list = jobs.get("ingestionJobSummaries", [])
+            if job_list:
+                sync_status = job_list[0].get("status", "UNKNOWN")
+        except Exception:
+            pass
+
+    return {
+        "bucket": KB_MANUALS_BUCKET,
+        "knowledge_base_id": KB_ID,
+        "sync_status": sync_status,
+        "files": files,
+        "count": len(files)
+    }
+
+
+@router.post("/kb/upload")
+def upload_kb_manual(req: KBUploadRequest):
+    """새로운 운영 매뉴얼(.md)을 S3에 저장하고 Bedrock KB 동기화(Sync) 트리거"""
+    if not s3_client:
+        raise HTTPException(status_code=500, detail="S3 클라이언트가 초기화되지 않았습니다.")
+
+    filename = req.filename.strip()
+    if not filename.endswith(".md"):
+        filename += ".md"
+
+    # S3 업로드
+    try:
+        s3_client.put_object(
+            Bucket=KB_MANUALS_BUCKET,
+            Key=filename,
+            Body=req.content.encode("utf-8"),
+            ContentType="text/markdown; charset=utf-8"
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"S3 업로드 실패: {str(e)}")
+
+    # Bedrock KB Ingestion Job 트리거
+    job_id = None
+    job_status = "STARTED"
+    if bedrock_agent_client:
+        try:
+            job_resp = bedrock_agent_client.start_ingestion_job(
+                knowledgeBaseId=KB_ID,
+                dataSourceId=KB_DATA_SOURCE_ID
+            )
+            job_id = job_resp.get("ingestionJob", {}).get("ingestionJobId")
+            job_status = job_resp.get("ingestionJob", {}).get("status", "IN_PROGRESS")
+        except Exception as e:
+            job_status = f"Ingestion trigger warning: {str(e)}"
+
+    return {
+        "status": "success",
+        "message": f"매뉴얼 '{filename}'이 S3에 업로드되고 Bedrock Knowledge Base 동기화가 시작되었습니다.",
+        "filename": filename,
+        "bucket": KB_MANUALS_BUCKET,
+        "job_id": job_id,
+        "job_status": job_status
+    }
+
+
+@router.get("/kb/sync-status")
+def get_kb_sync_status():
+    """Knowledge Base 최신 동기화 상태 확인"""
+    if not bedrock_agent_client:
+        return {"status": "UNKNOWN", "message": "Bedrock Agent client not ready"}
+    try:
+        jobs = bedrock_agent_client.list_ingestion_jobs(
+            knowledgeBaseId=KB_ID,
+            dataSourceId=KB_DATA_SOURCE_ID,
+            maxResults=3
+        )
+        job_list = jobs.get("ingestionJobSummaries", [])
+        latest = job_list[0] if job_list else None
+        return {
+            "knowledge_base_id": KB_ID,
+            "status": latest.get("status") if latest else "NO_JOBS",
+            "job_id": latest.get("ingestionJobId") if latest else None,
+            "updated_at": latest.get("updatedAt").isoformat() if latest and latest.get("updatedAt") else None,
+            "stats": latest.get("statistics") if latest else None
+        }
+    except Exception as e:
+        return {"status": "ERROR", "message": str(e)}
 
 
 # ----------------------------------------------------------------------
