@@ -626,4 +626,73 @@ Day 2~3에 핵심 기능이 안정적으로 동작한 이후, 여유가 있다�
 | **ECS Fargate Service** | `tving-backend-service`, `tving-streamlit-service` | **`tving-aiops-backend-service` [전용 ECS Service]** |
 | **주요 역할** | OTT 영상 콘텐츠 스트리밍 및 AI 추천 | 실시간 메트릭 수집, Bedrock AIOps 장애 진단 & 자율 격리 |
 
+---
+
+# 11. AIOps Harness 연동 구조 및 5대 도구 명세
+
+AIOps 관제 대시보드([tving-aiops-dashboard-761018884888](https://ap-northeast-2.console.aws.amazon.com/s3/buckets/tving-aiops-dashboard-761018884888?region=ap-northeast-2) / `https://ops.user6.cloudai.store`)의 AI 챗봇에 탑재된 **AIOps Agent Harness (Bedrock Tool-Calling Engine)**의 연동 구조입니다.
+
+### 1. Harness 아키텍처 흐름도 (End-to-End Flow)
+
+```text
+[운영자 질의 입력] (예: "S3 버킷 목록과 kjh-aiops-manuals 버킷 파일 확인해줘")
+       │
+       ▼
+[AIOps Dashboard 챗봇 UI] (https://ops.user6.cloudai.store)
+       │
+       ▼ (HTTPS POST /api/ops/ai-chat)
+[AIOps API Gateway (52fj3dpe8f) ➔ VPC Link (zdyees) ➔ Internal ALB]
+       │
+       ▼ (Port: 8000)
+[FastAPI 백엔드 AIOps Harness Engine (backend/routers/ops.py)]
+       │
+       ▼ (Converse API with Tool Configuration)
+[Amazon Bedrock (Claude 3 Haiku / 3.5 Sonnet)]
+       │
+       ├── [Tool 1 자율 호출] ➔ list_s3_buckets() ➔ S3 API 실행 결과 주입
+       ├── [Tool 2 자율 호출] ➔ get_s3_objects("kjh-aiops-manuals") ➔ S3 버킷 파일 목록 주입
+       ├── [Tool 3 자율 호출] ➔ search_knowledge_base("S3 AccessDenied") ➔ Bedrock KB (CW9N0QAOGB) RAG 검색
+       ├── [Tool 4 자율 호출] ➔ get_ec2_status("i-xxx" or "Name") ➔ EC2 인스턴스/상태검사 조회
+       └── [Tool 5 자율 호출] ➔ get_recent_logs("/ecs/tving-backend") ➔ CloudWatch Logs ERROR 검색
+       │
+       ▼ (모든 도구 실행 결과를 종합 추론하여 마크다운 포맷팅)
+[최종 응답 생성] ➔ 🛠️ AIOps Harness 도구 실행 이력 뱃지(Tool Trace) + 원인 분석 및 대응 가이드 표출
+```
+
+---
+
+### 2. AIOps Harness 5대 도구 (Tools) 상세 명세
+
+| 도구명 (Tool Name) | 파라미터 (Parameters) | 역할 및 기능 | 대상 AWS 서비스 |
+| :--- | :--- | :--- | :--- |
+| **`list_s3_buckets`** | *(없음)* | 현재 AWS 계정에 존재하는 전체 S3 Bucket 목록 및 생성일 반환 | Amazon S3 (`s3:ListAllMyBuckets`) |
+| **`get_s3_objects`** | `bucket_name` (필수), `prefix` (선택), `max_keys` (기본 20) | 특정 S3 버킷 내의 객체(Key, 크기, 수정일시) 목록 조회 | Amazon S3 (`s3:ListObjectsV2`) |
+| **`search_knowledge_base`** | `query` (필수, 검색 키워드) | Bedrock Knowledge Base에 등록된 클라우드 운영 매뉴얼(S3/EC2/CloudWatch 장애 가이드) RAG 검색 | Amazon Bedrock Agent Runtime (`Retrieve`) |
+| **`get_ec2_status`** | `instance_identifier` (ID 또는 Name) | EC2 인스턴스의 상태(running/stopped), 인스턴스/시스템 상태 검사, IP 조회 | Amazon EC2 (`DescribeInstances`, `DescribeInstanceStatus`) |
+| **`get_recent_logs`** | `log_group` (필수), `minutes` (기본 10), `filter_pattern` (기본 ERROR) | 지정한 CloudWatch Logs 그룹에서 최근 N분간의 에러 로그 검색 | Amazon CloudWatch Logs (`FilterLogEvents`) |
+
+---
+
+### 3. Bedrock Knowledge Base (KB) 및 S3 매뉴얼 동기화 현황
+- **Knowledge Base ID**: `CW9N0QAOGB` (`kjh-ops-manuals`)
+- **데이터 소스 ID**: `TPWBMJCRAO` (`kjh-ops-manuals-source`)
+- **S3 매뉴얼 버킷**: `s3://kjh-aiops-manuals/`
+  - `s3-troubleshooting.md`: S3 버킷 확인 및 AccessDenied 트러블슈팅 가이드
+  - `ec2-troubleshooting.md`: EC2 인스턴스 장애 대응 가이드
+  - `cloudwatch-troubleshooting.md`: CloudWatch 메트릭/로그 이상 징후 분석 가이드
+  - `incident-response.md`: 인프라 장애 긴급 대응 절차
+- **IAM 실행 역할 해결**: `AmazonBedrockExecutionRoleForKnowledgeBase_qo8uu`의 S3 정책을 `arn:aws:s3:::kjh-aiops-manuals/*`로 전체 허용하여 `AccessDenied` 없이 Ingestion Job 동기화 완료 (`status: COMPLETE`).
+
+---
+
+### 4. AIOps 대시보드 UI 연동 기능
+- **도구 실행 이력 시각화 (Tool Execution Trace)**: 챗봇이 답변 시 호출한 도구명과 입력값을 상단 파란색 뱃지로 투명하게 표시
+- **원클릭 빠른 질의 (Quick Prompts)**:
+  - `🗄️ S3 버킷 & 파일 확인`: `list_s3_buckets`, `get_s3_objects` 자동 실행
+  - `📖 S3 KB 매뉴얼 검색`: `search_knowledge_base` 자동 실행
+  - `🖥️ EC2/인프라 상태 점검`: `get_ec2_status` 자동 실행
+  - `📜 에러 로그 검색`: `get_recent_logs` 자동 실행
+  - `🔍 전체 헬스체크`: 시스템 종합 진단 리포트 생성
+
+
 
