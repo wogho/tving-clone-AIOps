@@ -630,38 +630,86 @@ Day 2~3에 핵심 기능이 안정적으로 동작한 이후, 여유가 있다�
 
 # 11. AIOps Harness 연동 구조 및 5대 도구 명세
 
-AIOps 관제 대시보드([tving-aiops-dashboard-761018884888](https://ap-northeast-2.console.aws.amazon.com/s3/buckets/tving-aiops-dashboard-761018884888?region=ap-northeast-2) / `https://ops.user6.cloudai.store`)의 AI 챗봇에 탑재된 **AIOps Agent Harness (Bedrock Tool-Calling Engine)**의 연동 구조입니다.
+AIOps 관제 대시보드([tving-aiops-dashboard-761018884888](https://ap-northeast-2.console.aws.amazon.com/s3/buckets/tving-aiops-dashboard-761018884888?region=ap-northeast-2) / `https://ops.user6.cloudai.store`)의 AI 챗봇에 탑재된 **AIOps Agent Harness (Bedrock Tool-Calling Engine)**의 상세 연동 구조 및 기술 구현 내역입니다.
 
-### 1. Harness 아키텍처 흐름도 (End-to-End Flow)
+---
+
+### 1. AIOps Harness 아키텍처 흐름도 (End-to-End Flow)
 
 ```text
 [운영자 질의 입력] (예: "S3 버킷 목록과 kjh-aiops-manuals 버킷 파일 확인해줘")
        │
        ▼
-[AIOps Dashboard 챗봇 UI] (https://ops.user6.cloudai.store)
+[AIOps Dashboard 챗봇 UI] (https://ops.user6.cloudai.store - S3 / CloudFront E2M3JJB7O2UE4O)
        │
        ▼ (HTTPS POST /api/ops/ai-chat)
-[AIOps API Gateway (52fj3dpe8f) ➔ VPC Link (zdyees) ➔ Internal ALB]
+[AIOps 전용 API Gateway (52fj3dpe8f) ➔ VPC Link (zdyees) ➔ Internal ALB (tving-aiops-internal-alb)]
        │
-       ▼ (Port: 8000)
+       ▼ (Target Group: tving-aiops-backend-tg:8000)
 [FastAPI 백엔드 AIOps Harness Engine (backend/routers/ops.py)]
        │
-       ▼ (Converse API with Tool Configuration)
-[Amazon Bedrock (Claude 3 Haiku / 3.5 Sonnet)]
+       ▼ (Converse API with AIOPS_TOOL_CONFIG - Claude 3 Haiku)
+[Amazon Bedrock Engine]
        │
-       ├── [Tool 1 자율 호출] ➔ list_s3_buckets() ➔ S3 API 실행 결과 주입
-       ├── [Tool 2 자율 호출] ➔ get_s3_objects("kjh-aiops-manuals") ➔ S3 버킷 파일 목록 주입
+       ├── [Tool 1 자율 호출] ➔ list_s3_buckets() ➔ S3 API (ListAllMyBuckets) 결과 반환
+       ├── [Tool 2 자율 호출] ➔ get_s3_objects("kjh-aiops-manuals") ➔ S3 API (ListObjectsV2) 파일 목록 반환
        ├── [Tool 3 자율 호출] ➔ search_knowledge_base("S3 AccessDenied") ➔ Bedrock KB (CW9N0QAOGB) RAG 검색
-       ├── [Tool 4 자율 호출] ➔ get_ec2_status("i-xxx" or "Name") ➔ EC2 인스턴스/상태검사 조회
-       └── [Tool 5 자율 호출] ➔ get_recent_logs("/ecs/tving-backend") ➔ CloudWatch Logs ERROR 검색
+       ├── [Tool 4 자율 호출] ➔ get_ec2_status("i-xxx" or "Name") ➔ EC2 API (DescribeInstances) 인스턴스 헬스 반환
+       └── [Tool 5 자율 호출] ➔ get_recent_logs("/ecs/tving-backend") ➔ CloudWatch Logs (FilterLogEvents) 에러 반환
        │
-       ▼ (모든 도구 실행 결과를 종합 추론하여 마크다운 포맷팅)
-[최종 응답 생성] ➔ 🛠️ AIOps Harness 도구 실행 이력 뱃지(Tool Trace) + 원인 분석 및 대응 가이드 표출
+       ▼ (도구 실행 결과를 context에 주입하여 Bedrock 2차 추론 ➔ 최종 마크다운 리포트 생성)
+[AIOps Dashboard UI] ➔ 🛠️ Harness 도구 실행 이력 뱃지(Tool Trace) + 원인 분석 및 긴급 조치 가이드 표출
 ```
 
 ---
 
-### 2. AIOps Harness 5대 도구 (Tools) 상세 명세
+### 2. AIOps Harness 연동 기술 구현 방식
+
+#### ① Bedrock Converse API Tool Configuration 정의
+FastAPI 백엔드(`backend/routers/ops.py`)에서 5가지 도구의 입력 스키마(JSON Schema)를 정의하여 Bedrock Converse API 호출 시 `toolConfig`로 전달합니다:
+```python
+AIOPS_TOOL_CONFIG = {
+    "tools": [
+        {"toolSpec": {"name": "list_s3_buckets", "description": "현재 AWS 계정의 전체 S3 버킷 목록 조회", "inputSchema": {"json": {"type": "object", "properties": {}}}}},
+        {"toolSpec": {"name": "get_s3_objects", "description": "특정 S3 버킷 내 객체 목록 조회", "inputSchema": {"json": {"type": "object", "properties": {"bucket_name": {"type": "string"}, "prefix": {"type": "string"}, "max_keys": {"type": "integer"}}, "required": ["bucket_name"]}}}},
+        {"toolSpec": {"name": "search_knowledge_base", "description": "Bedrock Knowledge Base 운영 매뉴얼 RAG 검색", "inputSchema": {"json": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}},
+        {"toolSpec": {"name": "get_ec2_status", "description": "EC2 인스턴스 상태 및 헬스체크 조회", "inputSchema": {"json": {"type": "object", "properties": {"instance_identifier": {"type": "string"}}, "required": ["instance_identifier"]}}}},
+        {"toolSpec": {"name": "get_recent_logs", "description": "CloudWatch Logs 에러 로그 실시간 검색", "inputSchema": {"json": {"type": "object", "properties": {"log_group": {"type": "string"}, "minutes": {"type": "integer"}, "filter_pattern": {"type": "string"}}, "required": ["log_group"]}}}}
+    ]
+}
+```
+
+#### ② Multi-Turn Tool-Calling 에이전트 루프 (Harness Loop)
+Bedrock이 질문을 분석하여 도구 사용(`stopReason == "tool_use"`)을 요청하면, 하네스가 해당 파이썬 함수를 직접 실행하고 그 결과를 `toolResult`로 Bedrock에 재주입하여 최종 답변을 도출합니다:
+```python
+for turn in range(max_turns):
+    response = bedrock_client.converse(
+        modelId=BEDROCK_MODEL_ID,
+        messages=messages,
+        system=[{"text": system_prompt}],
+        toolConfig=AIOPS_TOOL_CONFIG,
+        inferenceConfig={"maxTokens": 1024, "temperature": 0.2}
+    )
+    stop_reason = response.get("stopReason")
+    output_msg = response["output"]["message"]
+    messages.append(output_msg)
+
+    if stop_reason == "tool_use":
+        tool_results_content = []
+        for block in output_msg.get("content", []):
+            if "toolUse" in block:
+                tool_use = block["toolUse"]
+                tool_out = execute_tool_call(tool_use["name"], tool_use["input"])
+                tool_results_content.append({"toolResult": {"toolUseId": tool_use["toolUseId"], "content": [{"json": tool_out}], "status": "success"}})
+        messages.append({"role": "user", "content": tool_results_content})
+    else:
+        # 최종 마크다운 답변 도출
+        break
+```
+
+---
+
+### 3. AIOps Harness 5대 도구 (Tools) 상세 명세
 
 | 도구명 (Tool Name) | 파라미터 (Parameters) | 역할 및 기능 | 대상 AWS 서비스 |
 | :--- | :--- | :--- | :--- |
@@ -673,9 +721,10 @@ AIOps 관제 대시보드([tving-aiops-dashboard-761018884888](https://ap-northe
 
 ---
 
-### 3. Bedrock Knowledge Base (KB) 및 S3 매뉴얼 동기화 현황
+### 4. Bedrock Knowledge Base (KB) 및 S3 매뉴얼 동기화 현황
 - **Knowledge Base ID**: `CW9N0QAOGB` (`kjh-ops-manuals`)
 - **데이터 소스 ID**: `TPWBMJCRAO` (`kjh-ops-manuals-source`)
+- **임베딩 모델**: `amazon.titan-embed-text-v2:0` (1,024 Vector Dimensions)
 - **S3 매뉴얼 버킷**: `s3://kjh-aiops-manuals/`
   - `s3-troubleshooting.md`: S3 버킷 확인 및 AccessDenied 트러블슈팅 가이드
   - `ec2-troubleshooting.md`: EC2 인스턴스 장애 대응 가이드
@@ -685,8 +734,8 @@ AIOps 관제 대시보드([tving-aiops-dashboard-761018884888](https://ap-northe
 
 ---
 
-### 4. AIOps 대시보드 UI 연동 기능
-- **도구 실행 이력 시각화 (Tool Execution Trace)**: 챗봇이 답변 시 호출한 도구명과 입력값을 상단 파란색 뱃지로 투명하게 표시
+### 5. AIOps 대시보드 UI 연동 기능
+- **도구 실행 이력 시각화 (Tool Execution Trace)**: 챗봇이 답변 시 호출한 도구명과 입력값(예: `• list_s3_buckets: {}`, `• search_knowledge_base: {"query": "S3 AccessDenied"}`)을 상단 파란색 뱃지로 투명하게 표시.
 - **원클릭 빠른 질의 (Quick Prompts)**:
   - `🗄️ S3 버킷 & 파일 확인`: `list_s3_buckets`, `get_s3_objects` 자동 실행
   - `📖 S3 KB 매뉴얼 검색`: `search_knowledge_base` 자동 실행
@@ -696,13 +745,14 @@ AIOps 관제 대시보드([tving-aiops-dashboard-761018884888](https://ap-northe
 
 ---
 
-### 5. AIOps 관제 센터 관리자 인증 (Admin Authentication)
+### 6. AIOps 관제 센터 관리자 인증 (Admin Authentication)
 - **보안 격리**: 일반 서비스 프론트엔드(`user6.cloudai.store`)에서 AIOps 관제 버튼 완전 제거 및 100% 분리.
 - **관리자 전용 로그인 (회원가입 제외)**:
   - **관리자 ID**: `admin`
   - **비밀번호**: `admin@1234`
   - **인증 엔드포인트**: `POST /api/ops/login`
   - **접근 제어**: 미인증 시 대시보드 접근 차단 및 관리자 로그인 화면 노출, 인증 성공 시 대시보드 및 로그아웃 기능 활성화.
+
 
 
 
