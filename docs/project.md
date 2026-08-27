@@ -935,6 +935,80 @@ def lambda_handler(event, context):
     return {"statusCode": 200, "body": "OK"}
 ```
 
+---
+
+# 13. AIOps 게이트웨이·알림·부하테스트 종합 운영 체계 및 실무 시나리오
+
+본 섹션은 현재 구축된 **AgentCore Gateway / Lambda 5대 도구 매핑**, **Slack 알림 자동화**, 그리고 **TVING 부하테스트 및 장애 진단 실증 시나리오**를 종합 정리한 명세입니다.
+
+---
+
+### 1. AgentCore Gateway & Lambda 5대 도구 구성 매핑 (담당: 정근)
+
+* **게이트웨이 타겟 (Gateway Target)**: `ljg-aiops-tools`
+* **연결된 Lambda 함수 (Target Lambda)**: `aiops-agent-tools`
+* **동작 원리**: Agent는 Lambda 코드를 직접 읽지 않고, Gateway에 등록된 **Tool Schema(명세서)**를 기반으로 운영자의 질문 의도를 파악하여 적절한 도구를 자율 호출합니다.
+
+| 도구명 (Tool Name) | 운영자 자연어 질문 예시 | 도구 역할 및 실제 동작 메커니즘 | 대상 AWS 서비스 |
+| :--- | :--- | :--- | :--- |
+| **`get_ec2_status`** | *"이 EC2 인스턴스 살아있어?"*<br>*"현재 서버 상태 점검해줘"* | EC2 Instance ID 또는 Name Tag를 기반으로 **실제 구동 상태(Running), 퍼블릭/프라이빗 IP, 인스턴스/시스템 헬스체크 결과**를 조회 | Amazon EC2 |
+| **`list_s3_buckets`** | *"우리 계정에 어떤 S3 버킷 있어?"*<br>*"S3 버킷 목록 나열해줘"* | 현재 AWS 계정에 존재하는 **전체 S3 Bucket 이름 목록 및 생성일시**를 실시간 나열 | Amazon S3 |
+| **`get_s3_objects`** | *"이 버킷 안에 뭐 있어?"*<br>*"kjh-aiops-manuals 버킷 파일 보여줘"* | 지정한 S3 버킷 내의 **실제 객체(Key) 목록, 파일 용량(Size), 최종 수정일시**를 조회 | Amazon S3 |
+| **`get_recent_logs`** | *"최근 에러 로그 보여줘"*<br>*"ECS 백엔드 에러 발생 로그 확인해줘"* | CloudWatch Logs 그룹(`/ecs/tving-backend`)에서 **최근 N분간의 실제 `ERROR` 패턴 로그**를 실시간 검색 | Amazon CloudWatch Logs |
+| **`search_knowledge_base`** | *"SSH 접속 안 될 때 뭘 확인해야 해?"*<br>*"S3 AccessDenied 에러 대처법은?"* | Bedrock Knowledge Base(`CW9N0QAOGB`)에 등록된 **운영 매뉴얼/트러블슈팅 가이드(.md)에서 관련 내용을 시맨틱 RAG 검색**하여 답변 | Amazon Bedrock KB (RAG) |
+
+---
+
+### 2. 이상 탐지 Slack 실시간 알림 파이프라인 (`tving-aiops-slack-notifier`)
+
+* **메트릭 수집**: CloudWatch Metric Anomaly Detection을 통해 ECS CPU/Memory를 1분 주기로 실시간 수집.
+* **이벤트 전달**: 머신러닝 기대 대역(±2σ / ±3σ) 초과 시 SNS Topic(`tving-aiops-anomaly-alarm`) ➔ Lambda(`tving-aiops-slack-notifier`) 호출.
+* **상태별 대화형 알림 카드**:
+  * 🚨 **`ALARM` (Red)**: 이상 징후 원인 및 **4대 긴급 조치사항 (Action Items)** 자동 포맷팅.
+  * ✅ **`OK` (Green)**: 리소스 회복 수치, 헬스체크(HTTP 200 OK) 확인 및 **4대 복구 요약 (Resolution Summary)** 자동 전송.
+
+---
+
+### 3. AIOps 부하테스트 및 장애 진단 실증 시나리오
+
+#### 🎬 시나리오 1: TVING 신작 N개 동시 공개 부하테스트 & 화제성 트래픽 분석 (Flash Crowd)
+* **상황 설정**:
+  * TVING에서 **N개의 신규 오리지널 콘텐츠를 동시 공개**.
+  * 특정 킬러 콘텐츠(예: 인기 드라마/예능)에 대량의 트래픽이 집중 인입 (**각 콘텐츠에 n분 동안 m회의 대량 트래픽 발생**).
+* **AIOps 트래픽 분석 및 진단 흐름**:
+  1. **화제성 분석 및 트래픽 편중도 감지**: API Gateway 및 CloudWatch 메트릭을 통해 콘텐츠별 요청량(RPM)과 유입 세션을 분석하여 단순 공격이 아닌 특정 신작 오픈에 따른 **정상 화제성 트래픽(Flash Crowd)**임을 식별.
+  2. **오탐(False Positive) 정제**: WAF가 정상 팬들의 폭증 트래픽을 DDoS로 오판하여 차단하지 않도록 보호.
+  3. **SRE 자율 스케일아웃 및 완화 조치**:
+     * ECS Fargate 백엔드 태스크 증설 (`1대 ➔ 4대`).
+     * 해당 킬러 콘텐츠의 메타데이터 캐시(Redis/CloudFront) TTL 연장 및 DB 커넥션 풀 가용량 확보.
+  4. **Slack 보고**: `#ops-alerts` 채널로 콘텐츠별 트래픽 분석 차트 및 스케일아웃 조치 보고서 자동 전송.
+
+---
+
+#### 🎬 시나리오 2: 동일 RDS CPU 95% 증상의 3대 원인 분류 및 가설 검증 (Root Cause AIOps)
+* **상황 설정**: CloudWatch에서 `RDS CPUUtilization 95% ALARM`이 발생한 상황.
+* **3대 가설 교차 검증 (Cross-System Evidence)**:
+  * **가설 A (인기작 폭증)**: 다수 분산 IP 유입 + 전체 엔드포인트 균등 증가 ➔ **SRE 대응** (ECS 증설 / 캐시 연장).
+  * **가설 B (배포 쿼리 버그)**: 최근 1시간 내 신규 배포 이력 + N+1 Slow Query 급증 ➔ **DevOps 대응** (신규 버전 즉시 롤백).
+  * **가설 C (Algorithmic DoS)**: 단일 세션/IP에서 Full Scan 유발 복합 검색어 반복 호출 ➔ **SOAR 대응** (공격 토큰 차단 / WAF 룰 적용).
+
+---
+
+#### 🎬 시나리오 3: 애플리케이션 다단계 은닉 공격 ➔ SecAIOps 킬체인 추론 & SOAR 자율 격리
+* **상황 설정**: 개별 이벤트는 LOW/MEDIUM 수준으로 노이즈에 묻히는 4단계 지능형 공격 (정찰 ➔ 주거용 프록시 접근 ➔ SSRF 내부 피벗 ➔ RDS 데이터 유출 시도).
+* **SecAIOps 추론 및 대응**:
+  * Bedrock Claude가 6시간 분량의 분산 Finding과 시퀀스를 종합하여 **`ATTACK_ADAPTIVE_EXFIL` (킬체인 공격)** 확정 판정.
+  * 공격자 IP WAF 영구 차단, SSRF 엔드포인트 차단, 침해된 ECS 태스크 즉시 교체 및 Slack 포렌식 보고서 발행.
+
+---
+
+### 4. 향후 추가 확장 예정 기능 (Roadmap)
+
+1. **GuardDuty 실시간 Finding 수집 및 SOAR 자율 IP 격리 모듈 고도화**
+2. **콘텐츠 화제성 실시간 랭킹 연동 및 핫 콘텐츠 자동 캐시 프리로드(Pre-loading) 엔진**
+3. **Bedrock Multi-Agent 협업 체계 (SecOps 에이전트 ↔ SRE 에이전트 간 역할 분담 및 교차 검증)**
+
+
 
 
 
