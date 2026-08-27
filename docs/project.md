@@ -927,7 +927,7 @@ def lambda_handler(event, context):
             headers={'Content-Type': 'application/json'}
         )
         try:
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=60) as resp:
                 print(f"Slack post response status: {resp.status}")
         except Exception as e:
             print(f"Slack post failed: {str(e)}")
