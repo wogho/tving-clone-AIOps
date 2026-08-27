@@ -730,10 +730,12 @@
             sendMessage();
         }
 
+        let messageSeq = 0;
         function appendMessage(role, content) {
             const container = document.getElementById('chat-messages');
             const msgDiv = document.createElement('div');
-            const id = 'msg-' + Date.now();
+            messageSeq++;
+            const id = `msg-${role}-${Date.now()}-${messageSeq}-${Math.floor(Math.random() * 10000)}`;
             msgDiv.id = id;
             msgDiv.className = `msg-bubble ${role === 'user' ? 'msg-user' : 'msg-ai'}`;
             msgDiv.innerHTML = content;
