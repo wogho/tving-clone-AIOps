@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TVING AIOps - [방안 1] Bedrock Agent 콘솔 직결 테스트</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        :root {
+            --tving-red: #E50914;
+            --tving-black: #0F0F0F;
+            --tving-card: #181818;
+            --tving-border: #2A2A2A;
+            --accent-blue: #3B82F6;
+            --accent-green: #22C55E;
+            --accent-purple: #A855F7;
+        }
+
+        body {
+            background-color: var(--tving-black);
+            color: #FFFFFF;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+
+        .ops-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 30px 20px;
+        }
+
+        .ops-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding-bottom: 20px;
+            border-bottom: 1px solid var(--tving-border);
+            margin-bottom: 20px;
+        }
+
+        .ops-title {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .ops-title h1 {
+            font-size: 24px;
+            font-weight: 800;
+            margin: 0;
+            background: linear-gradient(90deg, #A855F7, #EC4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .badge-test {
+            background: rgba(168, 85, 247, 0.15);
+            color: var(--accent-purple);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        /* 방안 1 설정 바 */
+        .agent-config-bar {
+            background: #1A1A24;
+            border: 1px solid #3B2D54;
+            border-radius: 12px;
+            padding: 14px 20px;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .config-label {
+            font-size: 13px;
+            font-weight: 700;
+            color: #C084FC;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .config-input {
+            background: #111118;
+            border: 1px solid #4C3869;
+            color: #FFFFFF;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: monospace;
+            outline: none;
+        }
+
+        .config-input:focus {
+            border-color: #A855F7;
+        }
+
+        .chat-panel {
+            background: var(--tving-card);
+            border: 1px solid var(--tving-border);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            height: 760px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+        }
+
+        .chat-header {
+            padding: 18px 20px;
+            background: #1A1528;
+            border-bottom: 1px solid #33264A;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h2 {
+            font-size: 16px;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #E9D5FF;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            scroll-behavior: smooth;
+        }
+
+        @keyframes msgSlideIn {
+            from { opacity: 0; transform: translateY(12px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .chat-row-user {
+            display: flex;
+            justify-content: flex-end;
+            animation: msgSlideIn 0.25s ease-out;
+        }
+
+        .chat-row-ai {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            animation: msgSlideIn 0.25s ease-out;
+            max-width: 95%;
+        }
+
+        .awsui-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #7C3AED 0%, #EC4899 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            box-shadow: 0 2px 10px rgba(124, 58, 237, 0.4);
+        }
+
+        .awsui-avatar svg {
+            width: 18px;
+            height: 18px;
+            fill: #FFFFFF;
+        }
+
+        .msg-bubble-user {
+            background: linear-gradient(135deg, #7C3AED, #9333EA);
+            color: #FFFFFF;
+            padding: 12px 18px;
+            border-radius: 18px 18px 4px 18px;
+            font-size: 14px;
+            line-height: 1.5;
+            max-width: 80%;
+            word-break: break-word;
+            box-shadow: 0 4px 15px rgba(124, 58, 237, 0.3);
+        }
+
+        .msg-bubble-ai {
+            background: #1E1E1E;
+            border: 1px solid #333333;
+            color: #E2E8F0;
+            padding: 16px 20px;
+            border-radius: 4px 18px 18px 18px;
+            font-size: 14px;
+            line-height: 1.6;
+            flex: 1;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            position: relative;
+        }
+
+        /* Agent Trace Accordion */
+        .loopy-trace-wrapper {
+            margin-bottom: 16px;
+            background: #141414;
+            border: 1px solid #2D2D2D;
+            border-radius: 10px;
+            overflow: hidden;
+            transition: border-color 0.2s;
+        }
+
+        .loopy-trace-header {
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+            background: #181818;
+        }
+
+        .loopy-trace-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #C084FC;
+        }
+
+        .loopy-trace-chevron {
+            font-size: 12px;
+            color: #888888;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .loopy-trace-chevron.expanded {
+            transform: rotate(180deg);
+        }
+
+        .loopy-trace-content {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+            background: #111111;
+        }
+
+        .loopy-trace-content.expanded {
+            max-height: 1000px;
+        }
+
+        .loopy-trace-timeline {
+            padding: 14px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            border-top: 1px solid #222222;
+        }
+
+        .loopy-trace-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            font-size: 12px;
+        }
+
+        .loopy-node-badge {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            font-size: 10px;
+            margin-top: 2px;
+        }
+
+        .loopy-node-badge.success {
+            background: rgba(34, 197, 94, 0.15);
+            color: #22C55E;
+            border: 1px solid rgba(34, 197, 94, 0.4);
+        }
+
+        .loopy-tool-btn {
+            background: #252525;
+            border: 1px solid #383838;
+            color: #C084FC;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .loopy-connector {
+            background: #181818;
+            border: 1px solid #282828;
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 11px;
+            color: #D1D5DB;
+            font-family: monospace;
+            word-break: break-all;
+            margin-top: 4px;
+        }
+
+        .loopy-message-content {
+            font-size: 14px;
+            line-height: 1.7;
+            color: #E2E8F0;
+        }
+
+        .loopy-message-content strong { color: #FFFFFF; font-weight: 700; }
+        .loopy-message-content ul, .loopy-message-content ol { margin: 8px 0 12px 20px; padding: 0; }
+        .loopy-message-content li { margin-bottom: 4px; }
+        .loopy-message-content pre {
+            background: #0F172A;
+            border: 1px solid #1E293B;
+            padding: 12px 16px;
+            border-radius: 8px;
+            overflow-x: auto;
+            color: #A3E635;
+            font-size: 13px;
+        }
+
+        .loopy-message-actions {
+            margin-top: 12px;
+            display: flex;
+            justify-content: flex-end;
+            border-top: 1px solid rgba(255,255,255,0.06);
+            padding-top: 8px;
+        }
+
+        .copy-btn {
+            background: transparent;
+            border: 1px solid #333333;
+            color: #94A3B8;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover { background: #2D2D2D; color: #FFFFFF; }
+
+        .quick-prompts {
+            padding: 10px 20px;
+            background: #151515;
+            border-top: 1px solid var(--tving-border);
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+
+        .quick-btn {
+            background: #222;
+            border: 1px solid #333;
+            color: #CCC;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .quick-btn:hover {
+            background: #7C3AED;
+            color: white;
+            border-color: #7C3AED;
+        }
+
+        .chat-input-area {
+            padding: 15px 20px;
+            background: #1C1C1C;
+            border-top: 1px solid var(--tving-border);
+            display: flex;
+            gap: 10px;
+        }
+
+        .chat-input {
+            flex: 1;
+            background: #2B2B2B;
+            border: 1px solid #3A3A3A;
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+        }
+
+        .chat-input:focus { border-color: #A855F7; }
+
+        .chat-send-btn {
+            background: linear-gradient(135deg, #7C3AED, #9333EA);
+            color: white;
+            border: none;
+            padding: 0 20px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .chat-send-btn:hover { opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="ops-container">
+        <!-- 상단 헤더 -->
+        <header class="ops-header">
+            <div class="ops-title">
+                <h1>🧪 TVING AIOps - [방안 1] Bedrock Agent 직결 테스트</h1>
+                <span class="badge-test"><i class="fa-solid fa-flask"></i> Option 1 Sandbox</span>
+            </div>
+            <div style="display:flex; gap:10px;">
+                <a href="/" style="color:#AAA; text-decoration:none; font-size:13px; padding:8px 12px; border:1px solid #333; border-radius:8px;">
+                    <i class="fa-solid fa-house"></i> 메인 관제 센터로 이동
+                </a>
+            </div>
+        </header>
+
+        <!-- 방안 1 설정 바 (콘솔 Bedrock Agent 정보) -->
+        <div class="agent-config-bar">
+            <div class="config-label">
+                <i class="fa-solid fa-sliders"></i> 콘솔 Agent 직결 설정:
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:12px; color:#AAA;">Agent ID:</span>
+                <input type="text" id="cfg-agent-id" class="config-input" placeholder="예: CW9N0QAOGB 또는 Agent ID" style="width:160px;">
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:12px; color:#AAA;">Alias ID:</span>
+                <input type="text" id="cfg-alias-id" class="config-input" value="TSTALIASID" style="width:120px;">
+            </div>
+            <div style="display:flex; align-items:center; gap:8px;">
+                <span style="font-size:12px; color:#AAA;">Region:</span>
+                <select id="cfg-region" class="config-input" style="width:140px;">
+                    <option value="ap-northeast-2" selected>ap-northeast-2 (서울)</option>
+                    <option value="us-east-1">us-east-1 (버지니아)</option>
+                    <option value="us-west-2">us-west-2 (오레곤)</option>
+                </select>
+            </div>
+            <button onclick="saveAgentConfig()" style="background:#7C3AED; color:#FFF; border:none; padding:8px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">
+                <i class="fa-solid fa-save"></i> 설정 저장
+            </button>
+            <span id="cfg-save-msg" style="font-size:12px; color:#22C55E;"></span>
+        </div>
+
+        <!-- 직결 챗봇 영역 -->
+        <div class="chat-panel">
+            <div class="chat-header">
+                <h2><i class="fa-solid fa-microchip" style="color:#C084FC;"></i> Bedrock Agent (Harness) Direct Invoke</h2>
+                <span style="font-size:12px; color:#A855F7;">API: bedrock-agent-runtime.invoke_agent</span>
+            </div>
+
+            <div class="chat-messages" id="chat-messages">
+                <div class="chat-row-ai">
+                    <div class="awsui-avatar">
+                        <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M6.15 10.365 8 15.005l1.86-4.64 4.64-1.86-4.64-1.85L8 2.005l-1.85 4.65-4.65 1.85 4.65 1.86Z"></path>
+                            <path d="M2.38 4.915c.02.05.07.08.12.08.05 0 .12-.08.12-.08l.66-1.64 1.64-.66a.13.13 0 0 0 .08-.12c0-.05-.08-.12-.08-.12l-1.64-.66-.66-1.64c-.04-.1-.2-.1-.24 0l-.66 1.64-1.64.66a.13.13 0 0 0-.08.12c0 .05.08.12.08.12l1.64.66.66 1.64Z"></path>
+                        </svg>
+                    </div>
+                    <div class="msg-bubble-ai">
+                        <div class="loopy-message-content">
+                            🧪 <strong>[방안 1 테스트 모드] AWS 콘솔 Bedrock Agent 직결 테스트 환경입니다.</strong><br><br>
+                            이 모드는 백엔드 코드의 도구/프롬프트를 거치지 않고, <strong>AWS 콘솔에 구성된 Bedrock Agent를 직접 실행(`invoke_agent`)</strong>하여 응답을 가져옵니다.<br>
+                            상단 바에 테스트할 <strong>Agent ID</strong>를 입력하신 후 질문을 전송해보세요!
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 빠른 질의 버튼 -->
+            <div class="quick-prompts">
+                <button class="quick-btn" onclick="sendQuickPrompt('📜 최근 5xx 에러 로그 검색 및 분석')">📜 5xx 에러 검색 및 분석</button>
+                <button class="quick-btn" onclick="sendQuickPrompt('🗄️ 현재 S3 버킷 목록과 파일 목록 확인해줘')">🗄️ S3 버킷 확인</button>
+                <button class="quick-btn" onclick="sendQuickPrompt('🖥️ 현재 EC2 및 인프라 상태 점검해줘')">🖥️ EC2/인프라 상태</button>
+                <button class="quick-btn" onclick="sendQuickPrompt('🔍 전체 시스템 헬스체크 및 요약 보고서 작성해줘')">🔍 전체 헬스체크</button>
+            </div>
+
+            <!-- 챗 입력창 -->
+            <div class="chat-input-area">
+                <input type="text" class="chat-input" id="chat-input" placeholder="콘솔 Bedrock Agent에게 질의하세요... (Enter)" onkeydown="if(event.key==='Enter') sendMessage()">
+                <button class="chat-send-btn" onclick="sendMessage()"><i class="fa-solid fa-paper-plane"></i> 전송</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentSessionId = 'session-' + Date.now();
+
+        function loadAgentConfig() {
+            const savedId = localStorage.getItem('direct_agent_id') || '';
+            const savedAlias = localStorage.getItem('direct_alias_id') || 'TSTALIASID';
+            const savedRegion = localStorage.getItem('direct_region') || 'ap-northeast-2';
+
+            document.getElementById('cfg-agent-id').value = savedId;
+            document.getElementById('cfg-alias-id').value = savedAlias;
+            document.getElementById('cfg-region').value = savedRegion;
+        }
+
+        function saveAgentConfig() {
+            const id = document.getElementById('cfg-agent-id').value.trim();
+            const alias = document.getElementById('cfg-alias-id').value.trim();
+            const region = document.getElementById('cfg-region').value;
+
+            localStorage.setItem('direct_agent_id', id);
+            localStorage.setItem('direct_alias_id', alias);
+            localStorage.setItem('direct_region', region);
+
+            const msgEl = document.getElementById('cfg-save-msg');
+            msgEl.innerText = '✓ 저장 완료!';
+            setTimeout(() => { msgEl.innerText = ''; }, 2000);
+        }
+
+        async function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            const agentId = document.getElementById('cfg-agent-id').value.trim();
+            const aliasId = document.getElementById('cfg-alias-id').value.trim();
+            const region = document.getElementById('cfg-region').value;
+
+            input.value = '';
+            appendUserMessage(message);
+
+            const loadingId = appendAiLoading();
+
+            try {
+                const res = await fetch('/api/ops/ai-chat-direct', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        message: message,
+                        agent_id: agentId,
+                        agent_alias_id: aliasId,
+                        session_id: currentSessionId,
+                        region: region
+                    })
+                });
+
+                const data = await res.json();
+                renderAiResponse(loadingId, data);
+            } catch (e) {
+                updateAiError(loadingId, '⚠️ 백엔드 API 연결에 실패했습니다: ' + e.message);
+            }
+        }
+
+        function sendQuickPrompt(text) {
+            document.getElementById('chat-input').value = text;
+            sendMessage();
+        }
+
+        function appendUserMessage(content) {
+            const container = document.getElementById('chat-messages');
+            const row = document.createElement('div');
+            row.className = 'chat-row-user';
+            row.innerHTML = `<div class="msg-bubble-user">${escapeHtml(content)}</div>`;
+            container.appendChild(row);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function appendAiLoading() {
+            const container = document.getElementById('chat-messages');
+            const id = 'direct-ai-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+            const row = document.createElement('div');
+            row.className = 'chat-row-ai';
+            row.id = `row-${id}`;
+            row.innerHTML = `
+                <div class="awsui-avatar">
+                    <svg viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M6.15 10.365 8 15.005l1.86-4.64 4.64-1.86-4.64-1.85L8 2.005l-1.85 4.65-4.65 1.85 4.65 1.86Z"></path>
+                        <path d="M2.38 4.915c.02.05.07.08.12.08.05 0 .12-.08.12-.08l.66-1.64 1.64-.66a.13.13 0 0 0 .08-.12c0-.05-.08-.12-.08-.12l-1.64-.66-.66-1.64c-.04-.1-.2-.1-.24 0l-.66 1.64-1.64.66a.13.13 0 0 0-.08.12c0 .05.08.12.08.12l1.64.66.66 1.64Z"></path>
+                    </svg>
+                </div>
+                <div class="msg-bubble-ai" id="${id}">
+                    <span style="color:#C084FC; font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> Bedrock Agent를 직접 호출하여 추론 중입니다...</span>
+                </div>
+            `;
+            container.appendChild(row);
+            container.scrollTop = container.scrollHeight;
+            return id;
+        }
+
+        function renderAiResponse(id, data) {
+            const el = document.getElementById(id);
+            if (!el) return;
+
+            let traceHtml = '';
+            if (data.tools_used && data.tools_used.length > 0) {
+                traceHtml = `
+                    <div class="loopy-trace-wrapper">
+                        <div class="loopy-trace-header" onclick="toggleTrace(this)">
+                            <div class="loopy-trace-title">
+                                <i class="fa-solid fa-code-branch"></i> Bedrock Agent Action Trace (${data.tools_used.length} Actions)
+                            </div>
+                            <div class="loopy-trace-chevron expanded">
+                                <i class="fa-solid fa-chevron-down"></i>
+                            </div>
+                        </div>
+                        <div class="loopy-trace-content expanded">
+                            <div class="loopy-trace-timeline">
+                `;
+                data.tools_used.forEach(t => {
+                    traceHtml += `
+                        <div class="loopy-trace-row">
+                            <span class="loopy-node-badge success"><i class="fa-solid fa-check"></i></span>
+                            <div style="flex:1;">
+                                <span class="loopy-tool-btn"><i class="fa-solid fa-bolt"></i> ${t.tool}</span>
+                                <div class="loopy-connector">${escapeHtml(JSON.stringify(t.input))}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+                traceHtml += `
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            const rawReply = data.reply || '';
+            const formattedBody = formatReply(rawReply);
+
+            const actionsHtml = `
+                <div class="loopy-message-actions">
+                    <button class="copy-btn" onclick="copyResponse(this)" data-content="${encodeURIComponent(rawReply)}">
+                        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+                            <path d="M15 5H5v10h10V5Z" stroke="currentColor" fill="none" stroke-width="1.5"/>
+                            <path d="M13 1H1v11" stroke="currentColor" fill="none" stroke-width="1.5"/>
+                        </svg>
+                        <span>복사</span>
+                    </button>
+                </div>
+            `;
+
+            el.innerHTML = traceHtml + `<div class="loopy-message-content">${formattedBody}</div>` + actionsHtml;
+            const container = document.getElementById('chat-messages');
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function updateAiError(id, msg) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.innerHTML = `<span style="color:#F87171;"><i class="fa-solid fa-triangle-exclamation"></i> ${msg}</span>`;
+            }
+        }
+
+        function toggleTrace(headerEl) {
+            const wrapper = headerEl.closest('.loopy-trace-wrapper');
+            const content = wrapper.querySelector('.loopy-trace-content');
+            const chevron = wrapper.querySelector('.loopy-trace-chevron');
+
+            if (content.classList.contains('expanded')) {
+                content.classList.remove('expanded');
+                chevron.classList.remove('expanded');
+            } else {
+                content.classList.add('expanded');
+                chevron.classList.add('expanded');
+            }
+        }
+
+        function copyResponse(btn) {
+            const content = decodeURIComponent(btn.getAttribute('data-content'));
+            navigator.clipboard.writeText(content).then(() => {
+                const span = btn.querySelector('span');
+                const originalText = span.innerText;
+                span.innerText = '복사됨!';
+                btn.style.borderColor = '#22C55E';
+                btn.style.color = '#22C55E';
+                setTimeout(() => {
+                    span.innerText = originalText;
+                    btn.style.borderColor = '#333333';
+                    btn.style.color = '#94A3B8';
+                }, 1500);
+            });
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function formatReply(text) {
+            if (!text) return '';
+            return text
+                .replace(/\n\n/g, '<br><br>')
+                .replace(/\n/g, '<br>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/```([\s\S]*?)```/g, '<pre>$1</pre>')
+                .replace(/`([^`]+)`/g, '<code style="background:#0F172A; padding:2px 5px; border-radius:4px; color:#A3E635; border:1px solid #1E293B;">$1</code>');
+        }
+
+        loadAgentConfig();
+    </script>
+</body>
+</html>
