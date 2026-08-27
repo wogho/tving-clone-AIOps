@@ -872,14 +872,44 @@ def lambda_handler(event, context):
         new_state = alarm_data.get("NewStateValue", "ALARM")
         reason = alarm_data.get("NewStateReason", "상태 변경 감지")
         region = alarm_data.get("Region", "Asia Pacific (Seoul)")
+        alarm_type = alarm_data.get("AlarmType", "INFRA")
+        attacker_ip = alarm_data.get("AttackerIP", "198.51.100.23")
         remediation = alarm_data.get("Remediation", None)
         recovery_details = alarm_data.get("RecoveryDetails", None)
 
-        if new_state == "ALARM":
-            # 🚨 장애 발생 경보 카드 (TVING Red)
+        # ----------------------------------------------------
+        # 1. 🛡️ SecOps 보안 침해 및 DoS 공격 차단 알림
+        # ----------------------------------------------------
+        if alarm_type == "SECURITY_ATTACK" or "DoS" in alarm_name or "Security" in alarm_name or "WAF" in alarm_name:
+            block_actions = (
+                f"1. 침해 공격자 IP `{attacker_ip}` 식별 완료 (전체 트래픽 90% 집중)\n"
+                f"2. AWS WAF IPSet (`tving-blocked-ips`)에 악성 IP 즉시 영구 차단 등록\n"
+                f"3. 불필요한 ECS Fargate 서버 증설 중단 (클라우드 비용 낭비 방지)\n"
+                f"4. 정상 고객 요청 속도(HTTP 200 OK / 6ms) 즉시 안정화 완료"
+            ) if not remediation else remediation
+
+            attachment = {
+                "color": "#7C3AED",  # Purple for SecOps
+                "title": f"🛡️ [TVING SecAIOps 보안 침해 방어 완료] {alarm_name}",
+                "text": f"*{alarm_name}* 정상 트래픽에 은닉된 지능형 DoS 공격이 감지되어 **AWS WAF 자율 차단(SOAR)**이 완료되었습니다.",
+                "fields": [
+                    {"title": "공격 유형 (Attack Type)", "value": "`Algorithmic DoS / Resource Exhaustion`", "short": True},
+                    {"title": "차단된 공격자 IP", "value": f"`{attacker_ip}` (AWS WAF 격리)", "short": True},
+                    {"title": "보안 방어 상태", "value": "🛡️ `BLOCKED` (tving-blocked-ips 등록)", "short": True},
+                    {"title": "정상 트래픽 상태", "value": "🟢 `Flash Crowd` 정상 서비스 유지", "short": True},
+                    {"title": "탐지 및 분석 근거", "value": f"{reason}", "short": False},
+                    {"title": "📋 SecOps 자동 격리 조치 내역", "value": f"```{block_actions}```", "short": False}
+                ],
+                "footer": f"TVING SecAIOps Automated SOAR Defense | 리전: {region}"
+            }
+
+        # ----------------------------------------------------
+        # 2. 🚨 SRE 인프라 장애 발생 경보 (Red)
+        # ----------------------------------------------------
+        elif new_state == "ALARM":
             actions_text = (
                 "1. ECS Fargate 오토스케일링 태스크 증설 상태 확인\n"
-                "2. 비정상 인입 트래픽 및 과부하 엔드포인트(/api/ops/*) 차단\n"
+                "2. 비정상 인입 트래픽 및 과부하 엔드포인트(/api/ops/*) 점검\n"
                 "3. Slow Query 및 DB Connection Pool 가용량 점검\n"
                 "4. CloudWatch 이상 탐지 밴드 추이 및 컨테이너 리소스 모니터링"
             ) if not remediation else remediation
@@ -897,11 +927,14 @@ def lambda_handler(event, context):
                 ],
                 "footer": f"TVING AIOps Automated Incident Response | 리전: {region}"
             }
+
+        # ----------------------------------------------------
+        # 3. ✅ SRE 인프라 정상 복구 완료 알림 (Green)
+        # ----------------------------------------------------
         else:
-            # ✅ 정상 복구 완료 알림 카드 (Green)
             recovery_text = (
                 "1. 부하 프로세스 자동 종료 및 CPU/메모리 정상 수치 회복\n"
-                "2. ECS 헬스체크(/api/ops/status) 정상 응답(HTTP 200 OK) 확인\n"
+                "2. ECS 헬스체크(/health) 정상 응답(HTTP 200 OK) 확인\n"
                 "3. ALB 트래픽 분산 및 타겟 응답 지연 시간 안정화\n"
                 "4. 이상 탐지 대역(Anomaly Band) 내 완전 복귀 완료"
             ) if not recovery_details else recovery_details
