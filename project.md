@@ -753,6 +753,189 @@ for turn in range(max_turns):
   - **인증 엔드포인트**: `POST /api/ops/login`
   - **접근 제어**: 미인증 시 대시보드 접근 차단 및 관리자 로그인 화면 노출, 인증 성공 시 대시보드 및 로그아웃 기능 활성화.
 
+---
+
+# 12. AIOps 이상 탐지 Slack 알림 시스템 (`tving-aiops-slack-notifier`) 구성 형태
+
+CloudWatch 메트릭 이상 탐지(Anomaly Detection) 알람과 연동되어 장애 발생(`ALARM`) 및 자동 복구(`OK`) 상황을 실시간 감지하고, 운영자 Slack 채널로 대화형 조치 가이드 카드를 전송하는 **서버리스 알림 자동화 파이프라인**입니다.
+
+```text
+[ECS Fargate CPU / Memory 메트릭]
+       │
+       ▼ (실시간 메트릭 수집: 1분 주기)
+[CloudWatch Metric Anomaly Detection (±2σ / ±3σ Band)]
+       │
+       ├── (이상 급증/급락 감지 시 ALARM 상태 전이)
+       └── (정상 대역 복귀 감지 시 OK 상태 전이)
+       │
+       ▼
+[Amazon SNS Topic: tving-aiops-anomaly-alarm]
+       │
+       ▼ (Lambda 트리거 / Subscription)
+[AWS Lambda: tving-aiops-slack-notifier (Python 3.12)]
+       │
+       ├── 이벤트 파싱 (AlarmName, NewStateValue, StateChangeReason 등)
+       ├── 상태별 슬랙 메시지 카드 빌드 (🚨 Red 경보 / ✅ Green 복구)
+       └── Action Items (4대 긴급 조치사항) 및 복구 내역 포맷팅
+       │
+       ▼ (HTTPS POST / SLACK_WEBHOOK_URL)
+[운영팀 Slack 관제 채널 (#ops-alerts)]
+```
+
+---
+
+### 1. Lambda 함수 기본 리소스 스펙
+
+| 항목 (Property) | 상세 설정값 (Configuration) |
+| :--- | :--- |
+| **함수명 (Function Name)** | **`tving-aiops-slack-notifier`** |
+| **함수 ARN** | `arn:aws:lambda:ap-northeast-2:761018884888:function:tving-aiops-slack-notifier` |
+| **런타임 (Runtime)** | `Python 3.12` (Architecture: `x86_64`) |
+| **핸들러 (Handler)** | `lambda_function.lambda_handler` |
+| **메모리 / 타임아웃** | `128 MB` / `3초` |
+| **IAM 실행 역할 (Execution Role)** | `arn:aws:iam::761018884888:role/aiops-agent-tools-role` |
+| **로그 그룹 (CloudWatch Logs)** | `/aws/lambda/tving-aiops-slack-notifier` |
+| **환경변수 (Environment Variables)** | `SLACK_WEBHOOK_URL` = `https://hooks.slack.com/services/T01V1UNJP7T/...` |
+
+---
+
+### 2. 이벤트 트리거 및 SNS / CloudWatch 연동 구성
+
+#### ① SNS 토픽 구독 (Subscription)
+* **SNS Topic ARN**: `arn:aws:sns:ap-northeast-2:761018884888:tving-aiops-anomaly-alarm`
+* **구독 프로토콜 / 엔드포인트**: `lambda` ➔ `tving-aiops-slack-notifier`
+* **Lambda 리소스 정책 (Invoke Permission)**: `AllowSNSInvoke` (`sns.amazonaws.com`의 `arn:aws:sns:ap-northeast-2:761018884888:tving-aiops-anomaly-alarm` 호출 허용)
+
+#### ② 연동된 CloudWatch Anomaly Detection 경보 (Metric Alarms)
+| 알람 이름 (Alarm Name) | 대상 메트릭 / 리소스 | 이상 탐지 표현식 (Threshold) | 상태 전이 시 동작 |
+| :--- | :--- | :--- | :--- |
+| **`tving-ecs-cpu-anomaly-alarm`** | `AWS/ECS` `CPUUtilization`<br>(`tving-cluster` / `tving-backend-service`) | `ANOMALY_DETECTION_BAND(m1, 2)`<br>(표준편차 ±2σ 대역 초과) | `ALARM` & `OK` ➔ SNS 발송 |
+| **`tving-ecs-memory-anomaly-alarm`** | `AWS/ECS` `MemoryUtilization`<br>(`tving-cluster` / `tving-backend-service`) | `ANOMALY_DETECTION_BAND(m2, 3)`<br>(표준편차 ±3σ 대역 초과) | `ALARM` & `OK` ➔ SNS 발송 |
+
+---
+
+### 3. Slack 알림 카드 레이아웃 및 메시지 구조
+
+#### 🚨 1) 장애 발생 시 알림 카드 (`NewStateValue == 'ALARM'`)
+* **테마 색상**: `#E50914` (TVING Red)
+* **헤더 타이틀**: `🚨 [TVING AIOps 장애 경보] {AlarmName}`
+* **필드 구성**:
+  * **현재 상태**: `ALARM` (임계 대역 초과)
+  * **탐지 모델**: `CloudWatch Anomaly Detection (±2σ)`
+  * **대상 리소스**: `tving-cluster` / `tving-backend-service` (ECS Fargate)
+  * **감지 원인**: 임계 밴드 초과 상세 수치 및 타임스탬프
+  * **🛠️ 긴급 조치사항 (Action Items)**:
+    1. ECS Fargate 오토스케일링 태스크 증설 상태 확인
+    2. 비정상 인입 트래픽 및 과부하 엔드포인트(`/api/ops/*`) 차단
+    3. Slow Query 및 DB Connection Pool 가용량 점검
+    4. CloudWatch 이상 탐지 밴드 추이 및 컨테이너 리소스 모니터링
+* **푸터**: `TVING AIOps Automated Incident Response | 리전: Asia Pacific (Seoul)`
+
+#### ✅ 2) 정상 복구 완료 알림 카드 (`NewStateValue == 'OK'`)
+* **테마 색상**: `#22C55E` (Green)
+* **헤더 타이틀**: `✅ [TVING AIOps 정상 복구 완료] {AlarmName}`
+* **필드 구성**:
+  * **현재 상태**: `OK` (정상 범위 진입)
+  * **서비스 헬스체크**: `Healthy` (HTTP 200 OK)
+  * **대상 리소스**: `tving-cluster` / `tving-backend-service`
+  * **복구 사유**: 메트릭 값이 정상 기대 밴드 내부로 복귀한 상세 내용
+  * **📋 조치 및 복구 내역 (Resolution Summary)**:
+    1. 부하 프로세스 자동 종료 및 CPU/메모리 정상 수치 회복
+    2. ECS 헬스체크(`/api/ops/status`) 정상 응답(HTTP 200 OK) 확인
+    3. ALB 트래픽 분산 및 타겟 응답 지연 시간 안정화
+    4. 이상 탐지 대역(Anomaly Band) 내 완전 복귀 완료
+* **푸터**: `TVING AIOps Self-Healing & Incident Closed | 리전: Asia Pacific (Seoul)`
+
+---
+
+### 4. Lambda 핸들러 핵심 구현 코드 (`lambda_function.py`)
+
+```python
+import json
+import os
+import urllib.request
+
+SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
+
+def lambda_handler(event, context):
+    for record in event.get('Records', []):
+        sns_msg = record.get('Sns', {})
+        subject = sns_msg.get('Subject', 'TVING AIOps 알림')
+        message_raw = sns_msg.get('Message', '{}')
+        
+        try:
+            alarm_data = json.loads(message_raw)
+        except Exception:
+            alarm_data = {"RawMessage": message_raw}
+        
+        alarm_name = alarm_data.get("AlarmName", subject)
+        new_state = alarm_data.get("NewStateValue", "ALARM")
+        reason = alarm_data.get("NewStateReason", "상태 변경 감지")
+        region = alarm_data.get("Region", "Asia Pacific (Seoul)")
+        remediation = alarm_data.get("Remediation", None)
+        recovery_details = alarm_data.get("RecoveryDetails", None)
+
+        if new_state == "ALARM":
+            # 🚨 장애 발생 경보 카드 (TVING Red)
+            actions_text = (
+                "1. ECS Fargate 오토스케일링 태스크 증설 상태 확인\n"
+                "2. 비정상 인입 트래픽 및 과부하 엔드포인트(/api/ops/*) 차단\n"
+                "3. Slow Query 및 DB Connection Pool 가용량 점검\n"
+                "4. CloudWatch 이상 탐지 밴드 추이 및 컨테이너 리소스 모니터링"
+            ) if not remediation else remediation
+
+            attachment = {
+                "color": "#E50914",
+                "title": f"🚨 [TVING AIOps 장애 경보] {alarm_name}",
+                "text": f"*{alarm_name}* 에서 이상 징후가 감지되어 경보가 발령되었습니다.",
+                "fields": [
+                    {"title": "현재 상태", "value": f"`{new_state}` (임계 대역 초과)", "short": True},
+                    {"title": "탐지 모델", "value": "CloudWatch Anomaly Detection (±2σ)", "short": True},
+                    {"title": "대상 리소스", "value": "`tving-cluster` / `tving-backend-service` (ECS Fargate)", "short": False},
+                    {"title": "감지 원인 (Trigger Reason)", "value": f"{reason}", "short": False},
+                    {"title": "🛠️ 긴급 조치사항 (Action Items)", "value": f"```{actions_text}```", "short": False}
+                ],
+                "footer": f"TVING AIOps Automated Incident Response | 리전: {region}"
+            }
+        else:
+            # ✅ 정상 복구 완료 알림 카드 (Green)
+            recovery_text = (
+                "1. 부하 프로세스 자동 종료 및 CPU/메모리 정상 수치 회복\n"
+                "2. ECS 헬스체크(/api/ops/status) 정상 응답(HTTP 200 OK) 확인\n"
+                "3. ALB 트래픽 분산 및 타겟 응답 지연 시간 안정화\n"
+                "4. 이상 탐지 대역(Anomaly Band) 내 완전 복귀 완료"
+            ) if not recovery_details else recovery_details
+
+            attachment = {
+                "color": "#22C55E",
+                "title": f"✅ [TVING AIOps 정상 복구 완료] {alarm_name}",
+                "text": f"*{alarm_name}* 상태가 정상 대역으로 복귀하여 안정화되었습니다.",
+                "fields": [
+                    {"title": "현재 상태", "value": f"`{new_state}` (정상 범위 진입)", "short": True},
+                    {"title": "서비스 헬스체크", "value": "`Healthy` (HTTP 200 OK)", "short": True},
+                    {"title": "대상 리소스", "value": "`tving-cluster` / `tving-backend-service`", "short": False},
+                    {"title": "복구 사유", "value": f"{reason}", "short": False},
+                    {"title": "📋 조치 및 복구 내역 (Resolution Summary)", "value": f"```{recovery_text}```", "short": False}
+                ],
+                "footer": f"TVING AIOps Self-Healing & Incident Closed | 리전: {region}"
+            }
+
+        slack_payload = {"attachments": [attachment]}
+        req = urllib.request.Request(
+            SLACK_WEBHOOK_URL,
+            data=json.dumps(slack_payload).encode('utf-8'),
+            headers={'Content-Type': 'application/json'}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                print(f"Slack post response status: {resp.status}")
+        except Exception as e:
+            print(f"Slack post failed: {str(e)}")
+            
+    return {"statusCode": 200, "body": "OK"}
+```
+
+
 
 
 

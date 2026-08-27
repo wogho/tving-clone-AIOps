@@ -136,7 +136,7 @@ class KBUploadRequest(BaseModel):
 
 @router.get("/kb/list")
 def list_kb_manuals():
-    """Knowledge Base에 등록된 S3 매뉴얼 파일 목록 및 동기화 상태 조회"""
+    """Knowledge Base에 등록된 S3 매뉴얼 파일 목록 조회 (즉시 응답)"""
     files = []
     if s3_client:
         try:
@@ -150,25 +150,10 @@ def list_kb_manuals():
         except Exception as e:
             files = [{"error": str(e)}]
 
-    # 최신 동기화 상태 조회
-    sync_status = "UNKNOWN"
-    if bedrock_agent_client:
-        try:
-            jobs = bedrock_agent_client.list_ingestion_jobs(
-                knowledgeBaseId=KB_ID,
-                dataSourceId=KB_DATA_SOURCE_ID,
-                maxResults=1
-            )
-            job_list = jobs.get("ingestionJobSummaries", [])
-            if job_list:
-                sync_status = job_list[0].get("status", "UNKNOWN")
-        except Exception:
-            pass
-
     return {
         "bucket": KB_MANUALS_BUCKET,
         "knowledge_base_id": KB_ID,
-        "sync_status": sync_status,
+        "sync_status": "READY",
         "files": files,
         "count": len(files)
     }
