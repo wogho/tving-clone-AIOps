@@ -959,202 +959,104 @@ def execute_tool_call(tool_name: str, tool_args: dict):
     return res
 
 
+
 # ----------------------------------------------------------------------
-# AIOps Agent Harness Chat Handler (with Multi-Turn Tool Calling)
+# AIOps Agent Harness Direct Invoke (콘솔 하네스 1:1 직결)
 # ----------------------------------------------------------------------
+
+HARNESS_ARN = "arn:aws:bedrock-agentcore:ap-northeast-2:761018884888:harness/aiops_harness-imKz42wjiX"
+
+# AgentCore 클라이언트 초기화
+try:
+    agentcore_client = boto3.client('bedrock-agentcore', region_name=AWS_REGION)
+except Exception:
+    agentcore_client = None
+
 
 @router.post("/ai-chat")
 def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
     """
-    운영자 전용 AIOps 대화형 장애 진단 및 모니터링 AI 챗봇 (aiops_harness 전용 Tool-Calling 연동)
+    운영자 전용 AIOps 대화형 장애 진단 AI 챗봇
+    AWS 콘솔 Bedrock AgentCore Harness (aiops_harness)를 직접 호출하여
+    콘솔 Playground와 100% 동일한 응답을 반환합니다.
     """
+    import uuid
+
     user_query = request.message
+    session_id = f"web-session-{uuid.uuid4()}"
 
-    # 실시간 DB 헬스
-    db_ok = True
-    db_latency = 0.0
-    try:
-        t0 = time.time()
-        db.execute(text("SELECT 1;"))
-        db_latency = round((time.time() - t0) * 1000, 2)
-    except Exception:
-        db_ok = False
-
-    system_prompt = f"""너는 TVING 클론 서비스의 AWS 클라우드 운영을 총괄 지원하는 AIOps/SecOps 지능형 운영자 어시스턴트(AIOps Harness Agent)이다.
-TVING은 OTT 스트리밍 서비스이며, 콘텐츠 인기/화제성에 따라 특정 콘텐츠 API에 트래픽이 급격히 몰리는 경우가 발생할 수 있으며, 때로는 악의적인 DoS 공격을 받을 수도 있다.
-너의 역할은 이러한 트래픽 이상 상황이나 일반 장애 상황이 발생했을 때, 실제 AWS 리소스 상태와 운영 매뉴얼을 함께 조회하여 운영자에게 정확한 근거 기반 분석을 제공하는 것이다.
-사용자의 요청을 분석하고 필요한 Tool을 선택하여 실제 AWS 환경과 운영 매뉴얼을 확인한다.
-
-## 사용 가능한 Tool (총 17종)
-
-1. get_ec2_status: EC2 Instance ID 또는 Name Tag로 현재 상태와 Instance 이름 조회 (참고: TVING 서비스 자체는 ECS Fargate 기반이므로, 이 Tool은 별도 관리용 EC2(예: bastion, 배치 서버 등)가 있는 경우에만 사용한다.)
-2. list_s3_buckets: 현재 AWS 계정에서 조회 가능한 S3 Bucket 목록 조회 - TVING 프론트엔드 정적 파일, 운영 매뉴얼 등이 저장된 버킷을 확인할 때 사용
-3. get_s3_objects: 특정 S3 Bucket의 Object 목록 조회
-4. get_recent_logs: CloudWatch Logs의 최근 로그 검색 - TVING backend(ECS)의 에러 로그, ALB 접근 로그 등에서 일반적인 이상 징후를 확인할 때 사용
-5. search_knowledge_base: AWS 운영 매뉴얼 Knowledge Base (KB ID: {KB_ID}) 검색 - EC2/S3/CloudWatch/RDS 트러블슈팅 절차, 장애 대응 원칙을 검색
-6. analyze_traffic_by_path: CloudWatch Logs에서 특정 API 경로(기본: /api/contents)별 요청 횟수를 집계하여, 어떤 콘텐츠에 트래픽이 집중되었는지 정량적으로 분석한다. 트래픽 급증이나 화제성 관련 질문에는 get_recent_logs보다 이 Tool을 우선적으로 사용한다.
-7. diagnose_content_popularity: analyze_traffic_by_path의 결과를 바탕으로, 평균 대비 급증한 콘텐츠들을 자동으로 찾아내 화제성 여부를 진단하고 구체적인 대응 조치를 추천한다. 여러 콘텐츠(신작)가 동시에 화제가 되는 경우도 감지 가능하다. "트래픽 이상 있어?", "화제성 콘텐츠 진단해줘" 같은 질문에 사용한다.
-8. get_content_info: 콘텐츠 ID로 실제 제목, 카테고리 등 상세 정보를 조회한다. 트래픽 분석 결과 특정 콘텐츠 ID가 발견되면, 그 ID가 실제로 어떤 작품인지 확인하기 위해 이 Tool을 함께 사용한다.
-9. get_ecs_alarms: CloudWatch 경보 현재 상태 조회
-10. get_alarm_history: CloudWatch 경보의 최근 상태 변경 이력 조회
-11. get_ecs_5xx_errors: CloudWatch Logs에서 5xx 에러 검색 및 상태코드별 집계
-12. diagnose_ecs_health: 경보 상태와 5xx 에러를 종합하여 서비스 전반 건강 상태 진단
-13. list_log_groups: CloudWatch 로그 그룹 목록 조회
-14. analyze_traffic_security: 클라이언트 IP 패턴을 분석하여 정상 트래픽(화제성 Flash Crowd)인지 DoS 공격인지 판별
-15. block_malicious_ip: 식별된 악성 공격자 IP를 AWS WAF IPSet에 즉시 등록하여 차단
-16. list_blocked_ips: 현재 AWS WAF 차단 목록 조회
-17. unblock_ip: 오탐된 IP의 WAF 차단 해제
-
-## 다음 운영 및 진단 원칙을 따른다 (중요)
-
-1. 현재 AWS 리소스 상태를 질문하면 반드시 실제 조회 Tool을 사용한다. 추측으로 답하지 않는다.
-2. EC2 상태 확인에는 get_ec2_status를 사용한다. Instance ID 또는 Name Tag를 instance_identifier로 전달한다.
-3. S3 Bucket 목록 확인에는 list_s3_buckets를 사용한다.
-4. 특정 S3 Bucket의 Object 확인에는 get_s3_objects를 사용한다.
-5. 일반적인 에러/장애 로그 확인에는 get_recent_logs를 사용한다.
-6. 5xx 에러 및 경보 확인에는 get_ecs_5xx_errors, get_ecs_alarms, get_alarm_history를 사용한다.
-7. 장애 대응 방법이나 운영 절차를 질문하면 search_knowledge_base를 사용한다.
-8. 트래픽 급증, 화제성, "어떤 콘텐츠에 트래픽이 몰렸는지", "뭐가 문제야?", "트래픽 이상 있어?" 등을 질문받으면:
-   - 먼저 analyze_traffic_security를 호출하여 클라이언트 IP 분포 및 정상 트래픽(화제성)인지 악의적 DoS 공격인지 최우선 판별한다.
-   - securityVerdict가 "ATTACK_DETECTED"이면: 공격자 IP와 공격 유형을 명시하고, block_malicious_ip 사용을 권장한다.
-   - securityVerdict가 "LEGITIMATE_TRAFFIC"이면: 정상 트래픽이므로, analyze_traffic_by_path 또는 diagnose_content_popularity를 사용한다.
-   - 급증한 콘텐츠 ID가 발견되면 get_content_info로 실제 제목을 함께 조회하여 "OO 콘텐츠의 화제성 때문입니다"라고 답변한다.
-   - 정상적인 화제성 트래픽인지 실제 장애인지 명확히 구분하여 설명하고, 필요 시 search_knowledge_base로 관련 대응 절차를 함께 조회한다.
-9. Tool에서 조회한 결과는 실제 Evidence로 사용한다.
-10. Knowledge Base 검색 결과는 운영 절차의 근거로 사용한다.
-11. Tool에서 확인되지 않은 내용을 실제 사실처럼 단정하지 않는다.
-12. 리소스 조회가 실패한 경우, 리소스가 실제로 존재하지 않는 경우와 입력한 리소스 이름이 잘못된 경우를 구분하여 설명한다.
-13. AWS CLI 또는 임의의 Shell 명령으로 AWS 리소스를 직접 조회하지 않는다.
-14. EC2 종료, S3 삭제, IAM 변경, ECS 서비스 중지 등 파괴적 작업은 수행하지 않는다. 너는 조회, 분석, 조치 추천만 수행하며 실제 변경 작업은 운영자가 직접 수행한다.
-
-## 최종 답변 형식 (하네스 플레이북 완벽 일치 규격)
-
-필요한 경우 다음 형식으로 정리한다:
-
-분석 결과를 정리해드리겠습니다:
-
-현재 상태:
-- [현재 인프라 또는 에러 발생 상황 요약]
-
-Evidence:
-- 로그 그룹 / 리소스: [대상 리소스명]
-- 조회/분석 기간: [최근 N분 / N시간]
-- 5xx/경보 이벤트 수: [발생 횟수]
-- 상세 이벤트: [상세 로그 또는 '없음']
-
-이상 여부:
-- [현재 시점에서의 이상 유무 판정 (정상 트래픽 급증 vs 실제 장애/DoS 가능성)]
-
-가능한 원인:
-- [수집된 데이터를 바탕으로 한 원인 분석]
-
-추가 확인 항목:
-1. [교차 검증을 위해 추가로 살펴볼 리소스나 지표]
-2. [추가 모니터링 항목]
-
-권장 대응 절차:
-1. [운영자가 즉시 실행할 수 있는 구체적인 번호 매김 조치 방안]
-2. [모니터링 유지 및 후속 대응 가이드]
-
-추가적인 분석이나 다른 시간대의 로그 확인이 필요하시다면 말씀해 주세요.
-
-[실시간 기본 환경 정보]
-- 서비스: TVING OTT 플랫폼 (user6.cloudai.store / ops.user6.cloudai.store)
-- 리전: ap-northeast-2 (서울)
-- RDS PostgreSQL: tving-postgres (Status: {'HEALTHY' if db_ok else 'UNHEALTHY'}, Latency: {db_latency}ms)
-- ECS Cluster: tving-cluster | Backend Service: tving-backend-service / tving-aiops-backend-service
-"""
-
-
-    if not bedrock_client:
+    if not agentcore_client:
         return {
-            "reply": f"🤖 [AIOps Mock Agent]\n\n현재 시스템 상태는 정상입니다.\n- DB 상태: {'정상' if db_ok else '오류'}\n- 지연 시간: {db_latency}ms\n- 질의: {user_query}",
-            "model": "local-fallback",
+            "reply": "⚠️ Bedrock AgentCore 클라이언트 초기화에 실패했습니다.",
+            "model": "harness-error",
+            "status": "error",
             "tools_used": []
         }
 
-    messages = [
-        {
-            "role": "user",
-            "content": [{"text": user_query}]
-        }
-    ]
-
-    tools_used_history = []
-    max_turns = 6
-
     try:
-        for _ in range(max_turns):
-            response = bedrock_client.converse(
-                modelId=BEDROCK_MODEL_ID,
-                messages=messages,
-                system=[{"text": system_prompt}],
-                toolConfig=AIOPS_TOOL_CONFIG,
-                inferenceConfig={"maxTokens": 3000, "temperature": 0.2, "topP": 0.9}
-            )
+        response = agentcore_client.invoke_harness(
+            harnessArn=HARNESS_ARN,
+            runtimeSessionId=session_id,
+            messages=[
+                {"role": "user", "content": [{"text": user_query}]}
+            ],
+            timeoutSeconds=90
+        )
 
-            stop_reason = response.get("stopReason")
-            output_msg = response["output"]["message"]
-            messages.append(output_msg)
+        # EventStream 파싱: 텍스트 청크를 합치고 trace 이벤트를 수집
+        full_reply = ""
+        tools_used = []
+        usage_info = {}
 
-            if stop_reason == "tool_use":
-                # Tool Use 처리 루프
-                tool_results_content = []
-                for content_block in output_msg.get("content", []):
-                    if "toolUse" in content_block:
-                        tool_use = content_block["toolUse"]
-                        tool_id = tool_use["toolUseId"]
-                        tool_name = tool_use["name"]
-                        tool_input = tool_use["input"]
+        event_stream = None
+        for k, v in response.items():
+            if k != 'ResponseMetadata':
+                event_stream = v
+                break
 
-                        # 도구 실행
-                        tool_output = execute_tool_call(tool_name, tool_input)
-                        tools_used_history.append({
-                            "tool": tool_name,
-                            "input": tool_input,
-                            "output_summary": str(tool_output)[:200]
-                        })
+        if event_stream:
+            for event in event_stream:
+                # 텍스트 청크
+                if "contentBlockDelta" in event:
+                    delta = event["contentBlockDelta"].get("delta", {})
+                    if "text" in delta:
+                        full_reply += delta["text"]
 
-                        tool_results_content.append({
-                            "toolResult": {
-                                "toolUseId": tool_id,
-                                "content": [{"json": tool_output}],
-                                "status": "success"
-                            }
-                        })
+                # 도구 호출 추적 (trace 이벤트)
+                elif "trace" in event:
+                    trace_obj = event["trace"]
+                    orch = trace_obj.get("orchestrationTrace", {})
+                    if "invocationInput" in orch:
+                        action_input = orch["invocationInput"].get("actionGroupInvocationInput", {})
+                        if action_input:
+                            tools_used.append({
+                                "tool": action_input.get("function", action_input.get("actionGroupName", "tool")),
+                                "input": action_input.get("parameters", {}),
+                                "output_summary": "Harness Action Group Invocation"
+                            })
 
-                # 도구 실행 결과를 메시지에 추가
-                messages.append({
-                    "role": "user",
-                    "content": tool_results_content
-                })
-            else:
-                # 최종 응답 도달
-                final_text = ""
-                for block in output_msg.get("content", []):
-                    if "text" in block:
-                        final_text += block["text"]
-
-                return {
-                    "reply": final_text,
-                    "model": BEDROCK_MODEL_ID,
-                    "status": "success",
-                    "tools_used": tools_used_history
-                }
+                # 메타데이터 (토큰 사용량, 지연 시간)
+                elif "metadata" in event:
+                    meta = event["metadata"]
+                    usage_info = meta.get("usage", {})
 
         return {
-            "reply": "AIOps Harness 도구 호출 최대 턴을 초과했습니다.",
-            "status": "partial",
-            "tools_used": tools_used_history
+            "reply": full_reply if full_reply else "하네스로부터 응답을 수신하지 못했습니다.",
+            "model": "aiops_harness (AgentCore Direct)",
+            "status": "success",
+            "tools_used": tools_used,
+            "usage": usage_info,
+            "session_id": session_id
         }
 
     except Exception as e:
         return {
-            "reply": f"AIOps Harness 실행 중 오류 발생: {str(e)}",
-            "model": BEDROCK_MODEL_ID,
+            "reply": f"❌ Harness 직접 호출 중 오류 발생: {str(e)}",
+            "model": "aiops_harness",
             "status": "error",
-            "tools_used": tools_used_history
+            "tools_used": []
         }
+
 
 
 @router.post("/cpu-load")
