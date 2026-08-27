@@ -438,13 +438,147 @@ AIOPS_TOOL_CONFIG = {
                     }
                 }
             }
+        },
+        {
+            "toolSpec": {
+                "name": "analyze_traffic_security",
+                "description": "최근 CloudWatch 로그를 심층 분석하여 정상적인 신작 오픈 트래픽(Flash Crowd)인지 특정 공격자 IP의 DoS 공격인지 진단하고 공격자 IP를 식별합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "log_group": {
+                                "type": "string",
+                                "description": "분석할 로그 그룹 (기본: /ecs/tving-backend)"
+                            },
+                            "minutes": {
+                                "type": "integer",
+                                "description": "분석할 최근 시간(분, 기본: 10)"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "block_malicious_ip",
+                "description": "식별된 악성 공격자 IP를 AWS WAF IPSet에 즉시 등록하여 실시간으로 영구 격리/차단합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "ip_address": {
+                                "type": "string",
+                                "description": "차단할 공격자 IP 주소 (예: 198.51.100.23)"
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "차단 사유"
+                            }
+                        },
+                        "required": ["ip_address"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "list_blocked_ips",
+                "description": "현재 AWS WAF에 의해 격리/차단된 악성 IP 목록과 보안 상태를 조회합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {}
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "unblock_ip",
+                "description": "오탐으로 차단된 IP를 AWS WAF 차단 목록에서 제거하여 정상 트래픽으로 복구합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "ip_address": {
+                                "type": "string",
+                                "description": "차단 해제할 IP 주소"
+                            }
+                        },
+                        "required": ["ip_address"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "diagnose_content_popularity",
+                "description": "신작 공개 시 각 콘텐츠(ID)별 트래픽 집중도와 화제성을 진단하여 Flash Crowd 여부를 판정합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "log_group": {
+                                "type": "string",
+                                "description": "로그 그룹 이름"
+                            },
+                            "minutes": {
+                                "type": "integer",
+                                "description": "분석 시간(분)"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "get_content_info",
+                "description": "특정 콘텐츠 ID의 상세 정보(제목, 카테고리, 장르)를 조회합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "content_id": {
+                                "type": "integer",
+                                "description": "콘텐츠 ID 번호"
+                            }
+                        },
+                        "required": ["content_id"]
+                    }
+                }
+            }
         }
     ]
 }
 
 
+def call_lambda_agent_tool(tool_name: str, tool_args: dict):
+    """aiops-agent-tools Lambda 함수 직접 호출"""
+    payload = {"tool_name": tool_name, **tool_args}
+    try:
+        lambda_client = boto3.client("lambda", region_name=AWS_REGION)
+        resp = lambda_client.invoke(
+            FunctionName=AIOPS_TOOL_LAMBDA,
+            InvocationType="RequestResponse",
+            Payload=json.dumps(payload).encode("utf-8")
+        )
+        resp_payload = resp["Payload"].read().decode("utf-8")
+        return json.loads(resp_payload)
+    except Exception as e:
+        return {"error": f"Lambda Tool execution failed: {str(e)}"}
+
+
 def execute_tool_call(tool_name: str, tool_args: dict):
-    """AIOps Harness 도구 라우터"""
+    """AIOps Harness 도구 라우터 (Lambda 및 로컬 통합)"""
+    # 1. Lambda Tool 실행
+    res = call_lambda_agent_tool(tool_name, tool_args)
+    if "error" not in res or not res.get("error", "").startswith("Lambda Tool execution failed"):
+        return res
+
+    # 2. 로컬 fallback
     if tool_name == "get_ec2_status":
         return tool_get_ec2_status(tool_args.get("instance_identifier", ""))
     elif tool_name == "list_s3_buckets":
