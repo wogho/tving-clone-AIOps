@@ -996,6 +996,7 @@ def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
     try:
         response = agentcore_client.invoke_harness(
             harnessArn=HARNESS_ARN,
+            qualifier="DEFAULT",
             runtimeSessionId=session_id,
             messages=[
                 {"role": "user", "content": [{"text": user_query}]}
