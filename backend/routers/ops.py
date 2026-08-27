@@ -12,7 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from database import get_db
-from config import AWS_REGION, BEDROCK_MODEL_ID
+from config import AWS_REGION
+
+# AIOps 전용 Bedrock 모델 (콘솔 하네스와 동일한 Claude 3.5 Sonnet 지정)
+BEDROCK_MODEL_ID = "apac.anthropic.claude-3-5-sonnet-20240620-v1:0"
 
 router = APIRouter()
 

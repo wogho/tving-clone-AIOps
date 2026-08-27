@@ -2,7 +2,7 @@ import time
 import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, items, chat, ops
+from routers import auth, items, chat, ops, testops
 
 # 로거 설정
 logging.basicConfig(level=logging.INFO)
@@ -51,6 +51,8 @@ app.include_router(items.router, prefix="/api", tags=["콘텐츠/찜/시청기�
 app.include_router(chat.router, prefix="/api", tags=["AI 챗봇"])
 app.include_router(ops.router, prefix="/api/ops", tags=["AIOps 테스트"])
 app.include_router(ops.router, prefix="/ops", tags=["AIOps 테스트"])
+app.include_router(testops.router, prefix="/api/testops", tags=["Strands TestOps"])
+app.include_router(testops.router, prefix="/testops", tags=["Strands TestOps"])
 
 @app.get("/")
 def root():
