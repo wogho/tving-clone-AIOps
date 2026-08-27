@@ -336,6 +336,243 @@ def tool_search_knowledge_base(query: str):
         return {"error": str(e)}
 
 
+
+def tool_analyze_traffic_by_path(log_group: str = "/ecs/tving-backend", minutes: int = 10, path_prefix: str = "/api/contents"):
+    """Tool 6: API 경로별 트래픽 집중도 분석"""
+    if not logs_client:
+        return {"error": "Logs client not initialized"}
+    try:
+        import re
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - int(minutes) * 60 * 1000
+        response = logs_client.filter_log_events(
+            logGroupName=log_group,
+            startTime=start_ms,
+            endTime=end_ms,
+            filterPattern=f'"{path_prefix}"',
+            limit=5000
+        )
+        pattern = re.compile(r'"(?:GET|POST|PUT|DELETE)\s+(' + re.escape(path_prefix) + r'/\d+)')
+        counts = {}
+        for item in response.get("events", []):
+            m = pattern.search(item.get("message", ""))
+            if m:
+                p = m.group(1)
+                counts[p] = counts.get(p, 0) + 1
+        sorted_paths = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+        return {
+            "logGroup": log_group,
+            "minutes": minutes,
+            "totalRequests": sum(counts.values()),
+            "topPaths": [{"path": p, "count": c} for p, c in sorted_paths[:10]]
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def tool_diagnose_content_popularity(log_group: str = "/ecs/tving-backend", minutes: int = 10, path_prefix: str = "/api/contents", surge_multiplier: int = 3):
+    """Tool 7: 신작 화제성 집중도 자동 진단"""
+    data = tool_analyze_traffic_by_path(log_group, minutes, path_prefix)
+    if "error" in data:
+        return data
+    total = data.get("totalRequests", 0)
+    paths = data.get("topPaths", [])
+    if total < 5 or not paths:
+        return {"diagnosis": "INSUFFICIENT_DATA", "message": "최근 관측된 트래픽이 적습니다."}
+    avg = total / len(paths)
+    surging = [p for p in paths if p["count"] >= avg * surge_multiplier]
+    if surging:
+        return {"diagnosis": "CONTENT_POPULARITY_SURGE", "surgingContents": surging, "message": f"신작 화제성 트래픽 집중 감지 ({len(surging)}개 콘텐츠)"}
+    return {"diagnosis": "NORMAL_DISTRIBUTED_TRAFFIC", "message": "트래픽이 고르게 분산되어 있습니다."}
+
+
+def tool_get_content_info(content_id: int):
+    """Tool 8: 콘텐츠 상세 메타데이터 조회"""
+    try:
+        import urllib.request
+        req = urllib.request.Request(f"https://d33nd37o8cwhu4.cloudfront.net/api/contents/{content_id}", headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except Exception as e:
+        return {"contentId": content_id, "error": str(e)}
+
+
+def tool_get_ecs_alarms(alarm_name_prefix: str = "tving", state_filter: str = "ALL"):
+    """Tool 9: CloudWatch 경보 목록 조회"""
+    if not cw_client:
+        return {"error": "CloudWatch client not initialized"}
+    try:
+        kwargs = {}
+        if alarm_name_prefix:
+            kwargs["AlarmNamePrefix"] = str(alarm_name_prefix)
+        if state_filter and state_filter != "ALL":
+            kwargs["StateValue"] = state_filter
+        resp = cw_client.describe_alarms(**kwargs)
+        alarms = []
+        for a in resp.get("MetricAlarms", []):
+            alarms.append({
+                "name": a["AlarmName"],
+                "state": a["StateValue"],
+                "reason": a["StateReason"],
+                "metric": a.get("MetricName", a.get("ThresholdMetricId", "AnomalyBand")),
+                "updated": a["StateUpdatedTimestamp"].isoformat()
+            })
+        return {"prefix": alarm_name_prefix, "count": len(alarms), "alarms": alarms}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def tool_get_alarm_history(alarm_name_prefix: str = "tving", alarm_name: str = None, minutes: int = 1440):
+    """Tool 10: CloudWatch 경보 변경 이력 조회"""
+    if not cw_client:
+        return {"error": "CloudWatch client not initialized"}
+    try:
+        end = time.time()
+        start = end - int(minutes) * 60
+        kwargs = {
+            "StartDate": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(start)),
+            "EndDate": time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(end)),
+            "HistoryItemType": "StateUpdate",
+            "MaxRecords": 100
+        }
+        if alarm_name:
+            kwargs["AlarmName"] = str(alarm_name)
+        resp = cw_client.describe_alarm_history(**kwargs)
+        items = []
+        for h in resp.get("AlarmHistoryItems", []):
+            aname = h.get("AlarmName", "")
+            if alarm_name_prefix and not aname.startswith(str(alarm_name_prefix)) and not alarm_name:
+                continue
+            items.append({
+                "alarmName": aname,
+                "timestamp": h["Timestamp"].isoformat(),
+                "summary": h.get("HistorySummary", "")
+            })
+        return {"minutes": minutes, "count": len(items), "history": items[:25]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def tool_get_ecs_5xx_errors(log_group: str = "/ecs/tving-backend", minutes: int = 60, max_events: int = 20):
+    """Tool 11: 5xx 에러 로그 검색"""
+    return tool_get_recent_logs(log_group, minutes, "500 OR 502 OR 503 OR 504 OR Error OR Exception")
+
+
+def tool_diagnose_ecs_health(log_group: str = "/ecs/tving-backend", alarm_name_prefix: str = "tving", minutes: int = 30):
+    """Tool 12: ECS 헬스 종합 진단"""
+    alarms = tool_get_ecs_alarms(alarm_name_prefix, "ALARM")
+    errors = tool_get_ecs_5xx_errors(log_group, minutes)
+    active = alarms.get("alarms", [])
+    ecount = errors.get("count", 0)
+    if active or ecount > 5:
+        status = "DEGRADED"
+        msg = f"경보 {len(active)}건 발령 중, 최근 {minutes}분간 에러 {ecount}건 감지."
+    else:
+        status = "HEALTHY"
+        msg = "모든 경보 정상(OK), 에러 발생 없음."
+    return {"status": status, "diagnosis": msg, "activeAlarms": active, "errorCount": ecount}
+
+
+def tool_list_log_groups(prefix: str = "/ecs"):
+    """Tool 13: CloudWatch 로그 그룹 목록"""
+    if not logs_client:
+        return {"error": "Logs client not initialized"}
+    try:
+        kwargs = {}
+        if prefix:
+            kwargs["logGroupNamePrefix"] = str(prefix)
+        resp = logs_client.describe_log_groups(**kwargs)
+        return {"logGroups": [g["logGroupName"] for g in resp.get("logGroups", [])]}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def tool_analyze_traffic_security(log_group: str = "/ecs/tving-backend", minutes: int = 10):
+    """Tool 14: 보안 트래픽 분석 (Flash Crowd vs DoS)"""
+    if not logs_client:
+        return {"error": "Logs client not initialized"}
+    try:
+        import re
+        end_ms = int(time.time() * 1000)
+        start_ms = end_ms - int(minutes) * 60 * 1000
+        response = logs_client.filter_log_events(
+            logGroupName=log_group,
+            startTime=start_ms,
+            endTime=end_ms,
+            filterPattern="CLIENT_IP",
+            limit=5000
+        )
+        events = response.get("events", [])
+        if not events:
+            return {"securityVerdict": "LEGITIMATE_TRAFFIC", "message": "수신된 트래픽이 정상 범위입니다."}
+        log_regex = re.compile(r'\[CLIENT_IP:\s*([^\]]+)\]\s+([A-Z]+)\s+([^\s]+)\s+status=(\d+)\s+latency=([\d\.]+)ms')
+        ip_stats = {}
+        total = 0
+        for item in events:
+            m = log_regex.search(item.get("message", ""))
+            if m:
+                ip, method, path, status, latency = m.groups()
+                total += 1
+                if ip not in ip_stats:
+                    ip_stats[ip] = {"ip": ip, "count": 0, "totalLat": 0.0, "paths": {}}
+                ip_stats[ip]["count"] += 1
+                ip_stats[ip]["totalLat"] += float(latency)
+                ip_stats[ip]["paths"][path] = ip_stats[ip]["paths"].get(path, 0) + 1
+        attackers = []
+        for stat in ip_stats.values():
+            avg_lat = round(stat["totalLat"] / stat["count"], 1)
+            ratio = round(stat["count"] / total * 100, 1)
+            if (ratio >= 40.0 and avg_lat > 1000) or any("/api/ops/" in p for p in stat["paths"]):
+                attackers.append({"ip": stat["ip"], "count": stat["count"], "ratio": ratio, "avgLatency": avg_lat, "attackType": "Algorithmic DoS"})
+        if attackers:
+            return {"securityVerdict": "ATTACK_DETECTED", "attackers": attackers, "message": f"공격자 IP {attackers[0]['ip']}에서 DoS 공격 감지됨. block_malicious_ip 실행 필요."}
+        return {"securityVerdict": "LEGITIMATE_TRAFFIC", "uniqueIPs": len(ip_stats), "message": "정상 분산 트래픽(Flash Crowd)입니다."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def tool_block_malicious_ip(ip_address: str, reason: str = "AIOps Automated Defense"):
+    """Tool 15: AWS WAF IP 차단"""
+    try:
+        waf = boto3.client("wafv2", region_name=AWS_REGION)
+        clean_ip = ip_address.strip()
+        cidr = clean_ip if "/" in clean_ip else f"{clean_ip}/32"
+        resp = waf.get_ip_set(Name="tving-blocked-ips", Scope="REGIONAL", Id="4c43ae51-3cca-43ba-8047-11ac03676794")
+        lock_token = resp["LockToken"]
+        addrs = resp["IPSet"].get("Addresses", [])
+        if cidr not in addrs:
+            addrs.append(cidr)
+            waf.update_ip_set(Name="tving-blocked-ips", Scope="REGIONAL", Id="4c43ae51-3cca-43ba-8047-11ac03676794", Addresses=addrs, LockToken=lock_token)
+        return {"status": "BLOCKED_SUCCESS", "blockedIp": cidr, "totalBlocked": len(addrs), "message": f"WAF 차단 완료: {cidr}"}
+    except Exception as e:
+        return {"status": "ERROR", "error": str(e)}
+
+
+def tool_list_blocked_ips():
+    """Tool 16: WAF 차단 목록 조회"""
+    try:
+        waf = boto3.client("wafv2", region_name=AWS_REGION)
+        resp = waf.get_ip_set(Name="tving-blocked-ips", Scope="REGIONAL", Id="4c43ae51-3cca-43ba-8047-11ac03676794")
+        return {"blockedIps": resp["IPSet"].get("Addresses", []), "count": len(resp["IPSet"].get("Addresses", []))}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def tool_unblock_ip(ip_address: str):
+    """Tool 17: WAF 차단 해제"""
+    try:
+        waf = boto3.client("wafv2", region_name=AWS_REGION)
+        clean_ip = ip_address.strip()
+        cidr = clean_ip if "/" in clean_ip else f"{clean_ip}/32"
+        resp = waf.get_ip_set(Name="tving-blocked-ips", Scope="REGIONAL", Id="4c43ae51-3cca-43ba-8047-11ac03676794")
+        lock_token = resp["LockToken"]
+        addrs = [a for a in resp["IPSet"].get("Addresses", []) if a != cidr]
+        waf.update_ip_set(Name="tving-blocked-ips", Scope="REGIONAL", Id="4c43ae51-3cca-43ba-8047-11ac03676794", Addresses=addrs, LockToken=lock_token)
+        return {"status": "UNBLOCKED_SUCCESS", "unblockedIp": cidr}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 # Bedrock Tool Definitions (Tool Configuration)
 AIOPS_TOOL_CONFIG = {
     "tools": [
@@ -349,7 +586,7 @@ AIOPS_TOOL_CONFIG = {
                         "properties": {
                             "instance_identifier": {
                                 "type": "string",
-                                "description": "EC2 인스턴스 ID 또는 Name 태그"
+                                "description": "EC2 인스턴스 ID 또는 Name 태그 (예: tving-dev-vm)"
                             }
                         },
                         "required": ["instance_identifier"]
@@ -398,14 +635,14 @@ AIOPS_TOOL_CONFIG = {
         {
             "toolSpec": {
                 "name": "get_recent_logs",
-                "description": "지정한 CloudWatch Logs 그룹에서 최근 N분 동안의 에러 로그(기본 패턴: ERROR)를 검색합니다.",
+                "description": "지정한 CloudWatch Logs 그룹(기본: /ecs/tving-backend)에서 최근 N분 동안의 에러 로그(기본: ERROR)를 검색합니다.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
                         "properties": {
                             "log_group": {
                                 "type": "string",
-                                "description": "CloudWatch 로그 그룹 이름 (예: /ecs/tving-backend)"
+                                "description": "CloudWatch 로그 그룹 이름 (기본: /ecs/tving-backend)"
                             },
                             "minutes": {
                                 "type": "integer",
@@ -415,16 +652,16 @@ AIOPS_TOOL_CONFIG = {
                                 "type": "string",
                                 "description": "필터링할 에러 패턴 문자열 (기본 ERROR)"
                             }
-                        },
-                        "required": ["log_group"]
+                        }
                     }
                 }
             }
         },
+
         {
             "toolSpec": {
                 "name": "search_knowledge_base",
-                "description": "Bedrock Knowledge Base에 저장된 클라우드 운영 매뉴얼(S3, EC2, CloudWatch 장애 대응 가이드)에서 관련 문서를 검색합니다.",
+                "description": "Bedrock Knowledge Base(CW9N0QAOGB)에 저장된 클라우드 운영 매뉴얼(EC2, S3, CloudWatch 장애 대응 가이드)에서 관련 문서를 검색합니다.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -442,7 +679,7 @@ AIOPS_TOOL_CONFIG = {
         {
             "toolSpec": {
                 "name": "analyze_traffic_security",
-                "description": "최근 CloudWatch 로그를 심층 분석하여 정상적인 신작 오픈 트래픽(Flash Crowd)인지 특정 공격자 IP의 DoS 공격인지 진단하고 공격자 IP를 식별합니다.",
+                "description": "TVING CloudWatch 로그(/ecs/tving-backend)를 심층 분석하여 정상적인 신작 오픈 트래픽(Flash Crowd)인지 특정 공격자 IP의 DoS 공격인지 진단하고 공격자 IP를 식별합니다.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -463,7 +700,7 @@ AIOPS_TOOL_CONFIG = {
         {
             "toolSpec": {
                 "name": "block_malicious_ip",
-                "description": "식별된 악성 공격자 IP를 AWS WAF IPSet에 즉시 등록하여 실시간으로 영구 격리/차단합니다.",
+                "description": "식별된 악성 공격자 IP를 AWS WAF IPSet(tving-blocked-ips)에 즉시 등록하여 실시간으로 영구 격리/차단합니다.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -485,7 +722,7 @@ AIOPS_TOOL_CONFIG = {
         {
             "toolSpec": {
                 "name": "list_blocked_ips",
-                "description": "현재 AWS WAF에 의해 격리/차단된 악성 IP 목록과 보안 상태를 조회합니다.",
+                "description": "현재 AWS WAF(tving-blocked-ips)에 의해 격리/차단된 악성 IP 목록과 보안 상태를 조회합니다.",
                 "inputSchema": {
                     "json": {
                         "type": "object",
@@ -522,11 +759,11 @@ AIOPS_TOOL_CONFIG = {
                         "properties": {
                             "log_group": {
                                 "type": "string",
-                                "description": "로그 그룹 이름"
+                                "description": "로그 그룹 이름 (기본: /ecs/tving-backend)"
                             },
                             "minutes": {
                                 "type": "integer",
-                                "description": "분석 시간(분)"
+                                "description": "분석 시간(분, 기본: 10)"
                             }
                         }
                     }
@@ -550,13 +787,119 @@ AIOPS_TOOL_CONFIG = {
                     }
                 }
             }
+        }, 
+                {
+            "toolSpec": {
+                "name": "analyze_traffic_by_path",
+                "description": "CloudWatch Logs에서 API 경로(콘텐츠)별 요청 횟수를 집계하여 트래픽 집중도를 분석합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "log_group": {"type": "string", "description": "로그 그룹 이름"},
+                            "minutes": {"type": "integer", "description": "분석 시간(분)"},
+                            "path_prefix": {"type": "string", "description": "분석할 경로 접두사 (기본 /api/contents)"}
+                        },
+                        "required": ["log_group"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "get_ecs_alarms",
+                "description": "CloudWatch 경보(Alarm)의 현재 상태를 조회합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "alarm_name_prefix": {"type": "string", "description": "경보 이름 접두사 필터"},
+                            "state_filter": {"type": "string", "description": "상태 필터 (ALARM/OK/ALL)"}
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "get_ecs_5xx_errors",
+                "description": "CloudWatch Logs에서 5xx 에러를 검색하고 상태코드별로 집계합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "log_group": {"type": "string", "description": "로그 그룹 이름"},
+                            "minutes": {"type": "integer", "description": "분석 시간(분)"},
+                            "max_events": {"type": "integer", "description": "최대 조회 개수"}
+                        },
+                        "required": ["log_group"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "diagnose_ecs_health",
+                "description": "경보 상태와 5xx 에러를 종합하여 ECS 서비스의 전반적인 건강 상태를 진단합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "log_group": {"type": "string", "description": "로그 그룹 이름"},
+                            "alarm_name_prefix": {"type": "string", "description": "경보 이름 접두사"},
+                            "minutes": {"type": "integer", "description": "분석 시간(분)"}
+                        },
+                        "required": ["log_group"]
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "list_log_groups",
+                "description": "CloudWatch에 존재하는 로그 그룹 목록을 조회합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "prefix": {"type": "string", "description": "로그 그룹 이름 접두사 필터"}
+                        }
+                    }
+                }
+            }
+        },
+        {
+            "toolSpec": {
+                "name": "get_alarm_history",
+                "description": "CloudWatch 경보의 최근 상태 변경 이력(ALARM 전환 등)을 조회합니다.",
+                "inputSchema": {
+                    "json": {
+                        "type": "object",
+                        "properties": {
+                            "alarm_name_prefix": {"type": "string", "description": "경보 이름 접두사"},
+                            "minutes": {"type": "integer", "description": "조회할 시간 범위(분)"}
+                        }
+                    }
+                }
+            }
         }
+
     ]
 }
 
 
 def call_lambda_agent_tool(tool_name: str, tool_args: dict):
-    """aiops-agent-tools Lambda 함수 직접 호출"""
+    """aiops-agent-tools Lambda 함수 직접 호출 (파라미터 안전 기본값 적용)"""
+    # Safe defaults for TVING infrastructure
+    if "log_group" in tool_args:
+        if not tool_args["log_group"] or "my-ecs" in tool_args["log_group"] or tool_args["log_group"] == "/aws/ecs/containerinsights":
+            tool_args["log_group"] = "/ecs/tving-backend"
+    elif tool_name in ["get_recent_logs", "analyze_traffic_security", "diagnose_ecs_health", "diagnose_content_popularity", "get_ecs_5xx_errors"]:
+        tool_args["log_group"] = "/ecs/tving-backend"
+
+    if "alarm_name_prefix" in tool_args and not tool_args["alarm_name_prefix"]:
+        tool_args["alarm_name_prefix"] = "tving"
+
     payload = {"tool_name": tool_name, **tool_args}
     try:
         lambda_client = boto3.client("lambda", region_name=AWS_REGION)
@@ -572,13 +915,15 @@ def call_lambda_agent_tool(tool_name: str, tool_args: dict):
 
 
 def execute_tool_call(tool_name: str, tool_args: dict):
-    """AIOps Harness 도구 라우터 (Lambda 및 로컬 통합)"""
-    # 1. Lambda Tool 실행
+    """AIOps Harness 도구 실행기 (모든 도구를 Lambda aiops-agent-tools로 동적 위임)"""
+    # 1. Lambda Tool 직접 호출
     res = call_lambda_agent_tool(tool_name, tool_args)
-    if "error" not in res or not res.get("error", "").startswith("Lambda Tool execution failed"):
+    if "error" not in res:
+        return res
+    if not str(res.get("error", "")).startswith("Lambda Tool execution failed"):
         return res
 
-    # 2. 로컬 fallback
+    # 2. Lambda 자체 호출 실패 시 로컬 Fallback
     if tool_name == "get_ec2_status":
         return tool_get_ec2_status(tool_args.get("instance_identifier", ""))
     elif tool_name == "list_s3_buckets":
@@ -591,14 +936,27 @@ def execute_tool_call(tool_name: str, tool_args: dict):
         )
     elif tool_name == "get_recent_logs":
         return tool_get_recent_logs(
-            tool_args.get("log_group", ""),
+            tool_args.get("log_group", "/ecs/tving-backend"),
             tool_args.get("minutes", 10),
             tool_args.get("filter_pattern", "ERROR")
         )
     elif tool_name == "search_knowledge_base":
         return tool_search_knowledge_base(tool_args.get("query", ""))
-    else:
-        return {"error": f"Unknown tool: {tool_name}"}
+    elif tool_name == "analyze_traffic_by_path":
+        return tool_analyze_traffic_by_path(
+            tool_args.get("log_group", "/ecs/tving-backend"),
+            tool_args.get("minutes", 10),
+            tool_args.get("path_prefix", "/api/contents")
+        )
+    elif tool_name == "diagnose_content_popularity":
+        return tool_diagnose_content_popularity(
+            tool_args.get("log_group", "/ecs/tving-backend"),
+            tool_args.get("minutes", 10),
+            tool_args.get("path_prefix", "/api/contents")
+        )
+    elif tool_name == "get_content_info":
+        return tool_get_content_info(tool_args.get("content_id", 1))
+    return res
 
 
 # ----------------------------------------------------------------------
@@ -608,7 +966,7 @@ def execute_tool_call(tool_name: str, tool_args: dict):
 @router.post("/ai-chat")
 def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
     """
-    운영자 전용 AIOps 대화형 장애 진단 및 모니터링 AI 챗봇 (aiops_harness 5대 Tool-Calling 연동)
+    운영자 전용 AIOps 대화형 장애 진단 및 모니터링 AI 챗봇 (aiops_harness 전용 Tool-Calling 연동)
     """
     user_query = request.message
 
@@ -623,7 +981,8 @@ def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
         db_ok = False
 
     system_prompt = f"""당신은 TVING OTT 클라우드 인프라를 총괄하는 전문 SRE/SecOps AIOps 지능형 운영자 어시스턴트(AIOps Harness)입니다.
-사용 가능한 5가지 도구(Tool)를 적극 활용하여, 시스템 상태 확인, 장애 로그 분석, S3 버킷 및 파일 점검, Bedrock Knowledge Base 운영 매뉴얼 조회를 수행하고 정확한 근거 기반의 조치 가이드를 제공하세요.
+TVING은 콘텐츠 인기/화제성에 따라 특정 콘텐츠 API에 트래픽이 급격히 몰릴 수 있으며, 때로는 악의적인 DoS 공격을 받을 수도 있습니다.
+사용 가능한 도구를 적극 활용하여 시스템 상태 확인, 장애 로그 분석, 보안 위협 분석, S3/EC2 점검, Bedrock Knowledge Base 조회를 수행하고 정확한 근거 기반의 조치 가이드를 제공하세요.
 
 [사용 가능한 AIOps 도구]
 1. get_ec2_status: EC2 인스턴스 상태 및 헬스체크
@@ -631,6 +990,28 @@ def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
 3. get_s3_objects: 특정 S3 버킷 내부 객체 목록 확인
 4. get_recent_logs: CloudWatch Logs 에러 로그 실시간 검색
 5. search_knowledge_base: Bedrock Knowledge Base (KB ID: {KB_ID}) 장애 대응 매뉴얼 RAG 검색
+6. analyze_traffic_by_path: API 경로(콘텐츠)별 요청 집계, 어떤 콘텐츠에 트래픽이 몰렸는지 확인
+7. diagnose_content_popularity: 평균 대비 급증한 화제작을 자동 진단하고 조치 추천
+8. get_content_info: 콘텐츠 ID로 실제 제목/카테고리 조회
+9. analyze_traffic_security: 클라이언트 IP 패턴을 분석하여 정상 트래픽(화제성)인지 DoS 공격인지 판별
+10. block_malicious_ip / list_blocked_ips / unblock_ip: WAF를 통한 공격자 IP 차단/조회/해제
+11. get_ecs_alarms / get_alarm_history: CloudWatch 경보 현재 상태 및 이력 조회
+12. get_ecs_5xx_errors / diagnose_ecs_health: 5xx 에러 및 서비스 전반 건강 상태 진단
+13. list_log_groups: CloudWatch 로그 그룹 목록 조회
+
+[트래픽 이상 판단 원칙 - 중요]
+운영자가 "뭐가 문제야?", "지금 상황 어때?", "트래픽 이상 있어?" 처럼 막연하게 물어보면,
+다음 순서로 스스로 판단하여 답하십시오.
+
+1. 먼저 analyze_traffic_security를 호출하여 클라이언트 IP 분포를 확인합니다.
+   - securityVerdict가 "ATTACK_DETECTED"이면: 보안 공격(DoS)입니다.
+     공격자 IP와 공격 유형을 명시하고, block_malicious_ip 사용을 권장하십시오.
+   - securityVerdict가 "LEGITIMATE_TRAFFIC"이면: 정상 트래픽입니다.
+     이어서 analyze_traffic_by_path 또는 diagnose_content_popularity를 호출하여
+     어떤 콘텐츠에 트래픽이 몰렸는지 분석하고, get_content_info로 실제 제목을 확인하여
+     "OO 콘텐츠의 화제성 때문입니다"라고 답하십시오.
+2. 운영자가 Tool 이름을 직접 언급하지 않아도, 이 판단 순서에 따라 스스로 적절한 Tool들을 연쇄적으로 호출하십시오.
+3. 보안 공격과 화제성 트래픽을 혼동하지 않도록, analyze_traffic_security의 결과를 최우선 판단 기준으로 삼으십시오.
 
 [실시간 기본 환경 정보]
 - 서비스: TVING OTT 플랫폼 (user6.cloudai.store / ops.user6.cloudai.store)
@@ -642,6 +1023,7 @@ def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
 - 도구를 호출한 경우 어떤 도구로 어떤 데이터를 확인했는지 명시하세요.
 - 마크다운 형식으로 명확하고 체계적으로 정리하여 답변하세요.
 """
+
 
     if not bedrock_client:
         return {
