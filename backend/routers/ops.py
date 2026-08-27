@@ -961,103 +961,127 @@ def execute_tool_call(tool_name: str, tool_args: dict):
 
 
 # ----------------------------------------------------------------------
-# AIOps Agent Harness Direct Invoke (콘솔 하네스 1:1 직결)
+# AIOps Agent Harness Chat Handler (with Multi-Turn Tool Calling)
 # ----------------------------------------------------------------------
-
-HARNESS_ARN = "arn:aws:bedrock-agentcore:ap-northeast-2:761018884888:harness/aiops_harness-imKz42wjiX"
-
-# AgentCore 클라이언트 초기화
-try:
-    agentcore_client = boto3.client('bedrock-agentcore', region_name=AWS_REGION)
-except Exception:
-    agentcore_client = None
-
 
 @router.post("/ai-chat")
 def ops_ai_chat(request: OpsChatRequest, db: Session = Depends(get_db)):
     """
-    운영자 전용 AIOps 대화형 장애 진단 AI 챗봇
-    AWS 콘솔 Bedrock AgentCore Harness (aiops_harness)를 직접 호출하여
-    콘솔 Playground와 100% 동일한 응답을 반환합니다.
+    운영자 전용 AIOps 대화형 장애 진단 및 모니터링 AI 챗봇 (aiops_harness 전용 Tool-Calling 연동)
     """
-    import uuid
-
     user_query = request.message
-    session_id = f"web-session-{uuid.uuid4()}"
 
-    if not agentcore_client:
-        return {
-            "reply": "⚠️ Bedrock AgentCore 클라이언트 초기화에 실패했습니다.",
-            "model": "harness-error",
-            "status": "error",
-            "tools_used": []
-        }
-
+    # 실시간 DB 헬스
+    db_ok = True
+    db_latency = 0.0
     try:
-        response = agentcore_client.invoke_harness(
-            harnessArn=HARNESS_ARN,
-            qualifier="DEFAULT",
-            runtimeSessionId=session_id,
-            messages=[
-                {"role": "user", "content": [{"text": user_query}]}
-            ],
-            timeoutSeconds=90
-        )
+        t0 = time.time()
+        db.execute(text("SELECT 1;"))
+        db_latency = round((time.time() - t0) * 1000, 2)
+    except Exception:
+        db_ok = False
 
-        # EventStream 파싱: 텍스트 청크를 합치고 trace 이벤트를 수집
-        full_reply = ""
-        tools_used = []
-        usage_info = {}
+    system_prompt = f"""당신은 TVING OTT 클라우드 인프라를 총괄하는 전문 SRE & SecOps AIOps 지능형 운영자 어시스턴트(AIOps Harness)입니다.
+제공된 13가지 전문 도구(Tool)를 적극 활용하여, 시스템 상태 진단, CloudWatch 경보 및 에러 로그 분석, S3 버킷 점검, 신작 트래픽(Flash Crowd) 진단, 악성 DoS 공격 식별 및 AWS WAF SOAR 자율 차단, Bedrock Knowledge Base 운영 매뉴얼 조회를 수행하고 명확한 근거 기반의 조치 가이드를 제공하세요.
 
-        event_stream = None
-        for k, v in response.items():
-            if k != 'ResponseMetadata':
-                event_stream = v
-                break
+[필수 인프라 리소스 기본값]
+- 백엔드 로그 그룹: `/ecs/tving-backend` (모든 로그 및 트래픽 분석 시 이 로그 그룹 사용)
+- CloudWatch 경보 접두사: `tving` (예: tving-ecs-cpu-anomaly-alarm, tving-alb-5xx-high)
+- ECS 클러스터/서비스: `tving-cluster` / `tving-backend-service`
+- RDS PostgreSQL: tving-postgres (Status: {'HEALTHY' if db_ok else 'UNHEALTHY'}, Latency: {db_latency}ms)
+- AWS WAF IPSet: `tving-blocked-ips` (악성 IP 격리/차단용)
+- Bedrock Knowledge Base ID: `{KB_ID}`
 
-        if event_stream:
-            for event in event_stream:
-                # 텍스트 청크
-                if "contentBlockDelta" in event:
-                    delta = event["contentBlockDelta"].get("delta", {})
-                    if "text" in delta:
-                        full_reply += delta["text"]
+답변 작성 가이드:
+- 도구를 호출한 경우 어떤 도구로 어떤 실시간 지표/데이터를 확인했는지 명시하세요.
+- 마크다운 형식으로 체계적이고 신뢰도 높은 전문적인 가이드를 제공하세요.
+"""
 
-                # 도구 호출 추적 (trace 이벤트)
-                elif "trace" in event:
-                    trace_obj = event["trace"]
-                    orch = trace_obj.get("orchestrationTrace", {})
-                    if "invocationInput" in orch:
-                        action_input = orch["invocationInput"].get("actionGroupInvocationInput", {})
-                        if action_input:
-                            tools_used.append({
-                                "tool": action_input.get("function", action_input.get("actionGroupName", "tool")),
-                                "input": action_input.get("parameters", {}),
-                                "output_summary": "Harness Action Group Invocation"
-                            })
-
-                # 메타데이터 (토큰 사용량, 지연 시간)
-                elif "metadata" in event:
-                    meta = event["metadata"]
-                    usage_info = meta.get("usage", {})
-
+    if not bedrock_client:
         return {
-            "reply": full_reply if full_reply else "하네스로부터 응답을 수신하지 못했습니다.",
-            "model": "aiops_harness (AgentCore Direct)",
-            "status": "success",
-            "tools_used": tools_used,
-            "usage": usage_info,
-            "session_id": session_id
-        }
-
-    except Exception as e:
-        return {
-            "reply": f"❌ Harness 직접 호출 중 오류 발생: {str(e)}",
-            "model": "aiops_harness",
+            "reply": "⚠️ Bedrock Runtime 클라이언트 초기화에 실패했습니다.",
+            "model": "error",
             "status": "error",
             "tools_used": []
         }
 
+    conversation_messages = [
+        {
+            "role": "user",
+            "content": [{"text": user_query}]
+        }
+    ]
+
+    tools_used = []
+    max_turns = 6
+    turn_count = 0
+    final_reply = ""
+
+    while turn_count < max_turns:
+        turn_count += 1
+        try:
+            response = bedrock_client.converse(
+                modelId=BEDROCK_MODEL_ID,
+                messages=conversation_messages,
+                system=[{"text": system_prompt}],
+                toolConfig=AIOPS_TOOL_CONFIG,
+                inferenceConfig={"maxTokens": 2048, "temperature": 0.1, "topP": 0.9}
+            )
+        except Exception as e:
+            return {
+                "reply": f"❌ Bedrock 호출 오류: {str(e)}",
+                "model": BEDROCK_MODEL_ID,
+                "status": "error",
+                "tools_used": tools_used
+            }
+
+        output_msg = response.get("output", {}).get("message", {})
+        stop_reason = response.get("stopReason")
+        content_blocks = output_msg.get("content", [])
+
+        conversation_messages.append(output_msg)
+
+        if stop_reason == "tool_use":
+            tool_results_blocks = []
+            for block in content_blocks:
+                if "toolUse" in block:
+                    tool_use = block["toolUse"]
+                    tool_use_id = tool_use["toolUseId"]
+                    tool_name = tool_use["name"]
+                    tool_args = tool_use.get("input", {})
+
+                    # Execute tool call
+                    tool_result = execute_tool_call(tool_name, tool_args)
+
+                    tools_used.append({
+                        "tool": tool_name,
+                        "input": tool_args,
+                        "output_summary": str(tool_result)[:300]
+                    })
+
+                    tool_results_blocks.append({
+                        "toolResult": {
+                            "toolUseId": tool_use_id,
+                            "content": [{"json": tool_result if isinstance(tool_result, dict) else {"result": tool_result}}]
+                        }
+                    })
+
+            conversation_messages.append({
+                "role": "user",
+                "content": tool_results_blocks
+            })
+
+        elif stop_reason in ["end_turn", "stop_sequence", "max_tokens"] or not stop_reason:
+            text_chunks = [b["text"] for b in content_blocks if "text" in b]
+            final_reply = "".join(text_chunks).strip()
+            break
+
+    return {
+        "reply": final_reply or "AIOps 진단 결과를 생성하지 못했습니다.",
+        "model": BEDROCK_MODEL_ID,
+        "status": "success",
+        "tools_used": tools_used
+    }
 
 
 @router.post("/cpu-load")
